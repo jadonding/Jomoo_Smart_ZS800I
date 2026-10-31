@@ -12,7 +12,7 @@ import sys
 sys.path.insert(0, '/config')
 
 async def main():
-    for name in ('config_flow', 'coordinator', 'sensor', 'binary_sensor', 'button'):
+    for name in ('config_flow', 'coordinator', 'sensor', 'binary_sensor', 'button', 'switch', 'number'):
         importlib.import_module('custom_components.jomoo_zs800i.' + name)
         print('IMPORT OK:', name, flush=True)
     if not args.address:

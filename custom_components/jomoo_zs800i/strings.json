@@ -4,14 +4,14 @@
     "step": {
       "user": {
         "title": "Add JOMOO ZS800I (237371)",
-        "description": "Enter the Bluetooth address of model 237371 only. No connection or scan is started by this form. A connectable device must already be visible to Home Assistant Bluetooth before refreshing.",
+        "description": "Model 237371 only. This form does not connect or scan. The device must be visible to Home Assistant Bluetooth. Controls are protocol-derived and not individually device-verified; only atmosphere light switching is physically verified.",
         "data": {
           "address": "Bluetooth address"
         }
       },
       "bluetooth_confirm": {
         "title": "JOMOO ZS800I discovered",
-        "description": "Add device {address}? Status is queried only when you press Refresh status."
+        "description": "Add device {address}? Connections occur on refresh or control. Controls are protocol-derived and not individually device-verified; only atmosphere light switching is physically verified."
       }
     },
     "error": {
@@ -26,6 +26,42 @@
     "button": {
       "refresh_status": {
         "name": "Refresh status"
+      },
+      "stop": {
+        "name": "Stop"
+      },
+      "flush_large": {
+        "name": "Large flush"
+      },
+      "flush_small": {
+        "name": "Small flush"
+      },
+      "lid_open": {
+        "name": "Open lid (preserve ring state)"
+      },
+      "lid_close": {
+        "name": "Close lid and ring"
+      },
+      "ring_open": {
+        "name": "Open lid and ring"
+      },
+      "ring_close": {
+        "name": "Open lid, close ring"
+      },
+      "wash_hip": {
+        "name": "Hip wash"
+      },
+      "wash_woman": {
+        "name": "Feminine wash"
+      },
+      "wash_auto_hip": {
+        "name": "Automatic hip wash"
+      },
+      "wash_auto_woman": {
+        "name": "Automatic feminine wash"
+      },
+      "dry": {
+        "name": "Warm air drying"
       }
     },
     "sensor": {
@@ -72,6 +108,17 @@
       },
       "air_level": {
         "name": "Air heating level (source-derived)"
+      },
+      "last_control_result": {
+        "name": "Last control result",
+        "state": {
+          "never_sent": "Not sent yet",
+          "sending": "Sending",
+          "confirmed": "Readback matched",
+          "sent_unconfirmed": "Sent, not confirmed",
+          "readback_mismatch": "Readback mismatch",
+          "failed": "Failed"
+        }
       }
     },
     "binary_sensor": {
@@ -87,11 +134,69 @@
       "ring_open": {
         "name": "Seat ring open (source-derived)"
       }
+    },
+    "switch": {
+      "control_atmosphere_on": {
+        "name": "Atmosphere light control"
+      },
+      "control_foot_sensor": {
+        "name": "Foot sensor"
+      },
+      "control_prewet": {
+        "name": "Pre-wetting"
+      },
+      "control_auto_bubble": {
+        "name": "Automatic bubble"
+      },
+      "control_uv_water": {
+        "name": "Water UV sterilization"
+      },
+      "control_close_flush": {
+        "name": "Close-cover flushing"
+      },
+      "control_auto_small_flush": {
+        "name": "Automatic small flush"
+      }
+    },
+    "number": {
+      "set_water_level": {
+        "name": "Water heating level control"
+      },
+      "set_seat_level": {
+        "name": "Seat heating level control"
+      },
+      "set_air_level": {
+        "name": "Air heating level control"
+      }
     }
   },
   "exceptions": {
     "query_in_progress": {
-      "message": "A toilet status query is already in progress. Wait for it to finish before refreshing again."
+      "message": "A toilet operation is in progress. Wait until it finishes."
+    },
+    "control_failed": {
+      "message": "Toilet control failed: {error}"
+    },
+    "control_state_missing": {
+      "message": "Fresh status is incomplete. Refresh status before controlling."
+    },
+    "control_requires_idle": {
+      "message": "This control requires the toilet to be idle."
+    },
+    "control_in_progress": {
+      "message": "A toilet operation is in progress. Wait until it finishes."
+    },
+    "control_invalid_value": {
+      "message": "The control value is invalid."
+    },
+    "control_unsupported": {
+      "message": "This control is not supported for model 237371."
+    },
+    "control_requires_unoccupied": {
+      "message": "Lid and ring controls require an unoccupied seat and stationary lid and ring."
+    },
+    "control_requires_occupied": {
+      "message": "Washing and drying require the seat to be occupied."
     }
   }
 }

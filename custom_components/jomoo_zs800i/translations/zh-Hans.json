@@ -4,14 +4,14 @@
     "step": {
       "user": {
         "title": "添加九牧 ZS800I（237371）",
-        "description": "仅适用型号237371。填写蓝牙地址，本表单不建立连接、不发起扫描。刷新前设备须已被HA蓝牙以可连接方式发现。",
+        "description": "仅适用型号237371。本表单不连接、不扫描；设备须已被HA蓝牙发现。控制基于协议，尚未逐项实物验证；仅氛围灯开关已验证。",
         "data": {
           "address": "蓝牙地址"
         }
       },
       "bluetooth_confirm": {
         "title": "发现九牧 ZS800I",
-        "description": "添加设备 {address}？只有按下刷新状态按钮才连接查询。"
+        "description": "添加设备 {address}？刷新或控制时才连接。控制基于协议，尚未逐项实物验证；仅氛围灯开关已验证。"
       }
     },
     "error": {
@@ -26,6 +26,42 @@
     "button": {
       "refresh_status": {
         "name": "刷新状态"
+      },
+      "stop": {
+        "name": "停止"
+      },
+      "flush_large": {
+        "name": "大冲"
+      },
+      "flush_small": {
+        "name": "小冲"
+      },
+      "lid_open": {
+        "name": "打开盖板（保留圈状态）"
+      },
+      "lid_close": {
+        "name": "关盖关圈"
+      },
+      "ring_open": {
+        "name": "开盖开圈"
+      },
+      "ring_close": {
+        "name": "开盖关圈"
+      },
+      "wash_hip": {
+        "name": "臀洗"
+      },
+      "wash_woman": {
+        "name": "妇洗"
+      },
+      "wash_auto_hip": {
+        "name": "自动臀洗"
+      },
+      "wash_auto_woman": {
+        "name": "自动妇洗"
+      },
+      "dry": {
+        "name": "暖风烘干"
       }
     },
     "sensor": {
@@ -72,6 +108,17 @@
       },
       "air_level": {
         "name": "风温档位"
+      },
+      "last_control_result": {
+        "name": "最后控制结果",
+        "state": {
+          "never_sent": "尚未控制",
+          "sending": "正在控制",
+          "confirmed": "回读匹配",
+          "sent_unconfirmed": "已发送，未确认",
+          "readback_mismatch": "回读不匹配",
+          "failed": "控制失败"
+        }
       }
     },
     "binary_sensor": {
@@ -87,11 +134,69 @@
       "ring_open": {
         "name": "圈打开"
       }
+    },
+    "switch": {
+      "control_atmosphere_on": {
+        "name": "氛围灯控制"
+      },
+      "control_foot_sensor": {
+        "name": "脚感控制"
+      },
+      "control_prewet": {
+        "name": "预湿润"
+      },
+      "control_auto_bubble": {
+        "name": "自动发泡"
+      },
+      "control_uv_water": {
+        "name": "水路UV杀菌"
+      },
+      "control_close_flush": {
+        "name": "关盖冲厕"
+      },
+      "control_auto_small_flush": {
+        "name": "自动小冲"
+      }
+    },
+    "number": {
+      "set_water_level": {
+        "name": "水温档位设置"
+      },
+      "set_seat_level": {
+        "name": "座温档位设置"
+      },
+      "set_air_level": {
+        "name": "风温档位设置"
+      }
     }
   },
   "exceptions": {
     "query_in_progress": {
-      "message": "马桶正在查询，请等待本次完成后再刷新。"
+      "message": "马桶正在查询或控制，请等待本次操作完成。"
+    },
+    "control_failed": {
+      "message": "马桶控制失败：{error}"
+    },
+    "control_state_missing": {
+      "message": "新鲜状态不完整，请刷新后再控制。"
+    },
+    "control_requires_idle": {
+      "message": "请在马桶空闲时操作。"
+    },
+    "control_in_progress": {
+      "message": "马桶正在操作，请稍后再试。"
+    },
+    "control_invalid_value": {
+      "message": "控制值无效。"
+    },
+    "control_unsupported": {
+      "message": "型号237371不支持此控制。"
+    },
+    "control_requires_unoccupied": {
+      "message": "盖圈操作须无人着座，且盖圈已停止运动。"
+    },
+    "control_requires_occupied": {
+      "message": "请着座后再启动清洗或烘干。"
     }
   }
 }

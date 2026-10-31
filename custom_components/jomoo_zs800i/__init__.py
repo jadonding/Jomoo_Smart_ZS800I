@@ -1,4 +1,4 @@
-"""Read-only, on-demand JOMOO ZS800I integration."""
+"""On-demand JOMOO ZS800I status and protocol-derived controls."""
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, SOURCE_IMPORT
 from homeassistant.const import CONF_ADDRESS, Platform
@@ -13,7 +13,8 @@ CONFIG_SCHEMA = vol.Schema({
 
 from .coordinator import JomooCoordinator
 
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON]
+PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON,
+             Platform.SWITCH, Platform.NUMBER]
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:

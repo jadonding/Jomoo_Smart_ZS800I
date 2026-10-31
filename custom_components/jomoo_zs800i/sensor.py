@@ -10,7 +10,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = entry.runtime_data
     async_add_entities([JomooSensor(coordinator, key) for key in (
         "last_status_time", "raw_fa", "raw_e9", "raw_ea", "address", "model",
-        "last_query_result", "water_level", "seat_level", "air_level")])
+        "last_query_result", "last_control_result", "water_level", "seat_level", "air_level")])
 
 
 class JomooSensor(JomooEntity, SensorEntity):
@@ -22,6 +22,10 @@ class JomooSensor(JomooEntity, SensorEntity):
         elif key == "last_query_result":
             self._attr_device_class = SensorDeviceClass.ENUM
             self._attr_options = list(QUERY_RESULTS)
+        elif key == "last_control_result":
+            self._attr_device_class = SensorDeviceClass.ENUM
+            self._attr_options = ["never_sent", "sending", "confirmed",
+                                  "sent_unconfirmed", "readback_mismatch", "failed"]
         self._attr_icon = "mdi:toilet"
 
     @property
@@ -37,11 +41,15 @@ class JomooSensor(JomooEntity, SensorEntity):
             return MODEL
         if self.key == "last_query_result":
             return data["last_result"]
+        if self.key == "last_control_result":
+            return data.get("last_control_result", "never_sent")
         return data["fields"].get(self.key)
 
     @property
     def extra_state_attributes(self):
         attrs = super().extra_state_attributes
+        if self.key == "last_control_result":
+            attrs["sent_frame"] = self.coordinator.data.get("last_control_frame")
         if self.key.startswith("raw_"):
             attrs["observed_at"] = self.coordinator.data["frame_times"].get(self.key[4:].upper())
             attrs["format"] = "uppercase HEX, no spaces, max 42 characters"

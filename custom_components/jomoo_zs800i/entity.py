@@ -30,4 +30,7 @@ class JomooEntity(CoordinatorEntity):
         return {"snapshot_only": True,
                 "last_status_time": self.coordinator.data.get("last_status_time"),
                 "last_query_time": self.coordinator.data.get("last_query_time"),
-                "last_query_result": self.coordinator.data.get("last_result")}
+                "last_query_result": self.coordinator.data.get("last_result"),
+                "last_control_result": self.coordinator.data.get("last_control_result"),
+                "last_control_name": self.coordinator.data.get("last_control_name"),
+                "last_control_time": self.coordinator.data.get("last_control_time")}

@@ -38,6 +38,10 @@ class FrameParser:
     def buffered_bytes(self) -> int:
         return len(self._buffer)
 
+    def reset(self) -> None:
+        """Discard an incomplete frame at a transaction phase boundary."""
+        self._buffer.clear()
+
     def feed(self, data: bytes | bytearray) -> list[bytes]:
         if len(data) > MAX_INPUT:
             self._buffer.clear()
@@ -94,12 +98,35 @@ def decode_source_fields(frame: bytes) -> dict[str, int | bool]:
     if command == 0xFA and len(payload) >= 3:
         result = {"water_level": (payload[0] >> 4) & 7,
                   "seat_level": payload[1] & 7, "air_level": payload[2] & 7}
+        if len(payload) >= 5:
+            result.update(close_flush=bool(payload[4] & 2),
+                          flush_small_running=bool(payload[4] & 4),
+                          flush_large_running=bool(payload[4] & 8))
         if len(payload) >= 6:
-            result["atmosphere_on"] = bool(payload[5] & 0x10)
+            result.update(atmosphere_on=bool(payload[5] & 0x10),
+                          uv_water=bool(payload[5] & 0x20))
+        if len(payload) >= 7:
+            result.update(auto_bubble=bool(payload[6] & 8), prewet=bool(payload[6] & 0x20))
+        if len(payload) >= 8:
+            result.update(foot_sensor=bool(payload[7] & 0x20),
+                          auto_small_flush=bool(payload[7] & 0x10))
         return result
     if command == 0xE9 and payload:
-        return {"occupancy": bool(payload[0] & 0x80)}
+        result = {"occupancy": bool(payload[0] & 0x80)}
+        if len(payload) >= 4:
+            code = payload[3]
+            result.update(work_code=code, working=code not in (1, 2), dry_running=code in (16, 144))
+            if len(payload) >= 5:
+                flags = payload[4]
+                special = code in (1, 2, 3, 131, 16, 144) or bool(flags & 0x24)
+                hip = not special and bool(code & 0x20)
+                woman = not special and not hip and bool(code & 0x40)
+                result.update(auto_work=bool(flags & 8), hip_wash_running=hip,
+                              woman_wash_running=woman, is_woman=woman)
+        return result
     if command == 0xEA and payload:
         return {"ring_open": bool(payload[0] & 0x02),
-                "lid_open": bool(payload[0] & 0x08)}
+                "lid_open": bool(payload[0] & 0x08),
+                "ring_moving": bool(payload[0] & 0x20),
+                "lid_moving": bool(payload[0] & 0x40)}
     return {}

@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / "custom_components" / "jomoo_zs800i"
@@ -144,9 +144,33 @@ class ProtocolTests(unittest.TestCase):
 
     def test_source_fields(self):
         self.assertEqual(protocol.decode_source_fields(FA),
-                         {"water_level": 3, "seat_level": 3, "air_level": 2, "atmosphere_on": True})
-        self.assertEqual(protocol.decode_source_fields(E9), {"occupancy": False})
-        self.assertEqual(protocol.decode_source_fields(EA), {"ring_open": False, "lid_open": False})
+                         {"water_level": 3, "seat_level": 3, "air_level": 2, "atmosphere_on": True,
+                          "close_flush": True, "flush_small_running": False, "flush_large_running": False,
+                          "uv_water": True, "auto_bubble": True, "prewet": True,
+                          "foot_sensor": True, "auto_small_flush": False})
+        self.assertEqual(protocol.decode_source_fields(E9), {"occupancy": False, "work_code": 1,
+                         "working": False, "is_woman": False, "dry_running": False,
+                         "hip_wash_running": False, "woman_wash_running": False, "auto_work": False})
+        self.assertEqual(protocol.decode_source_fields(EA), {"ring_open": False, "lid_open": False,
+                         "ring_moving": False, "lid_moving": False})
+
+    def test_parser_phase_reset_drops_partial_pre_write_frame(self):
+        parser = protocol.FrameParser()
+        self.assertEqual(parser.feed(FA[:5]), [])
+        parser.reset()
+        self.assertEqual(parser.buffered_bytes, 0)
+        self.assertEqual(parser.feed(FA), [FA])
+
+    def test_special_work_modes_are_not_misconfirmed_as_wash(self):
+        payload = bytearray(E9[6:-2])
+        payload[3], payload[4] = 0x20, 0x20
+        fields = protocol.decode_source_fields(frame(0xE9, payload))
+        self.assertFalse(fields["hip_wash_running"])
+        self.assertTrue(fields["working"])
+        payload[3], payload[4] = 0x60, 0
+        fields = protocol.decode_source_fields(frame(0xE9, payload))
+        self.assertTrue(fields["hip_wash_running"])
+        self.assertFalse(fields["woman_wash_running"])
 
     def test_atmosphere_payload_bit_and_minimum_length(self):
         self.assertFalse(protocol.decode_source_fields(frame(0xFA, bytes([0, 0, 0, 0, 0, 0x2A])))["atmosphere_on"])
@@ -192,8 +216,12 @@ class FakeClient:
     async def disconnect(self):
         self.disconnected = True
 
+    initial_packets = []
+
     async def start_notify(self, char, cb):
         self.cb = cb
+        for packet in self.initial_packets:
+            cb(char, bytearray(packet))
         if self.fail == "subscribe":
             raise BLEError("subscribe error")
 
@@ -202,13 +230,17 @@ class FakeClient:
         if self.fail == "stop":
             raise BLEError("stop error")
 
+    packet_script = None
+
     async def write_gatt_char(self, char, data, *, response):
         self.writes.append((data, response))
         if self.gate is not None:
             await self.gate.wait()
         if self.fail == "write":
             raise BLEError("write error")
-        for packet in self.packets:
+        packets = (self.packet_script[min(len(self.writes) - 1, len(self.packet_script) - 1)]
+                   if self.packet_script else self.packets)
+        for packet in packets:
             self.cb(char, bytearray(packet))
 
 
@@ -218,6 +250,8 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         FakeClient.packets = [FA[:7], FA[7:] + E9 + EA]
         FakeClient.fail = None
         FakeClient.gate = None
+        FakeClient.packet_script = None
+        FakeClient.initial_packets = []
         FakeClient.instances = []
         FakeClient.missing = False
         FakeClient.service = const.SERVICE_UUID
@@ -231,7 +265,9 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
 
         self.patches = [patch.object(coordinator_module, "BleakClient", FakeClient),
                         patch.object(bluetooth, "async_ble_device_from_address", lookup),
-                        patch.object(coordinator_module, "NOTIFY_TIMEOUT", 0.025)]
+                        patch.object(coordinator_module, "NOTIFY_TIMEOUT", 0.025),
+                        patch.object(coordinator_module, "CONTROL_SETTLE", 0),
+                        patch.object(coordinator_module, "CONTROL_READBACK_TIMEOUT", 0.005)]
         for item in self.patches:
             item.start()
         self.entry = types.SimpleNamespace(data={"address": "AA:BB:CC:DD:EE:FF"}, entry_id="test")
@@ -400,6 +436,164 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(FakeClient.instances), 1)
         self.assertTrue(FakeClient.instances[0].stopped)
         self.assertTrue(FakeClient.instances[0].disconnected)
+        self.assertFalse(self.coordinator._lock.locked())
+
+    async def test_current_scanner_route_does_not_wait_for_duplicate_advertisement(self):
+        with patch.object(bluetooth, "async_scanner_devices_by_address", lambda *a, **kw: [object()], create=True), \
+             patch.object(self.coordinator, "_async_wait_for_advertisement", AsyncMock(side_effect=AssertionError("unnecessary scan"))):
+            await self.coordinator.async_control("atmosphere_on", True)
+        self.assertEqual(self.coordinator.data["last_control_result"], "confirmed")
+        self.assertTrue(FakeClient.instances[0].disconnected)
+
+    async def test_initial_fa_inside_subscription_is_not_dropped(self):
+        FakeClient.initial_packets = [FA]
+        FakeClient.packets = [E9, EA]
+        await self.coordinator.async_control("air_level", 1)
+        controls = [p for p, _ in FakeClient.instances[0].writes if p != const.QUERY]
+        self.assertEqual(len(controls), 1)
+        self.assertEqual(controls[0][5], 25)
+        self.assertEqual(self.coordinator.data["last_control_result"], "sent_unconfirmed")
+
+    async def test_short_control_does_not_require_fa_baseline(self):
+        FakeClient.packets = [E9, EA]
+        await self.coordinator.async_control("atmosphere_on", False)
+        controls = [p for p, _ in FakeClient.instances[0].writes if p != const.QUERY]
+        self.assertEqual(controls, [bytes.fromhex("f3f40692211f33101bfc")])
+        self.assertEqual(self.coordinator.data["last_control_result"], "sent_unconfirmed")
+
+    async def test_second_readonly_query_recovers_missing_fa_before_control(self):
+        payload = bytearray(FA[6:-2])
+        payload[2] = (payload[2] & ~7) | 1
+        changed = frame(0xFA, payload)
+        FakeClient.packet_script = [[E9, EA], [FA, E9, EA], [changed, E9, EA]]
+        await self.coordinator.async_control("air_level", 1)
+        writes = FakeClient.instances[0].writes
+        self.assertEqual([p for p, _ in writes[:2]], [const.QUERY, const.QUERY])
+        self.assertEqual(len([p for p, _ in writes if p != const.QUERY]), 1)
+        self.assertEqual(self.coordinator.data["last_control_result"], "confirmed")
+
+    async def test_readback_error_after_write_preserves_unknown_outcome(self):
+        original = FakeClient.write_gatt_char
+        async def broken_readback(client, char, data, *, response):
+            if data == const.QUERY and len(client.writes) >= 2:
+                raise BLEError("readback transport broke")
+            await original(client, char, data, response=response)
+        with patch.object(FakeClient, "write_gatt_char", broken_readback), \
+             patch.object(coordinator_module._LOGGER, "warning"):
+            with self.assertRaises(HAError):
+                await self.coordinator.async_control("atmosphere_on", False)
+        self.assertTrue(self.coordinator.data["control_write_completed"])
+        self.assertEqual(self.coordinator.data["last_control_result"], "sent_unconfirmed")
+        self.assertEqual(len([p for p, _ in FakeClient.instances[0].writes if p != const.QUERY]), 1)
+
+    async def test_notify_source_must_be_toilet(self):
+        def spoof(packet):
+            raw = bytearray(packet)
+            raw[3] = 0x92
+            raw[-2] = sum(raw[2:-2]) & 255
+            return bytes(raw)
+        FakeClient.packets = [spoof(FA), spoof(E9), spoof(EA)]
+        await self.coordinator.async_query()
+        self.assertEqual(self.coordinator.data["frames"], {})
+        self.assertEqual(self.coordinator.data["last_result"], "no_valid_status")
+
+    async def test_guard_is_rechecked_after_settle_before_actuation(self):
+        payload = bytearray(E9[6:-2])
+        payload[0] |= 0x80
+        occupied = frame(0xE9, payload)
+        original = FakeClient.write_gatt_char
+        async def changing_occupancy(client, char, data, *, response):
+            await original(client, char, data, response=response)
+            if len(client.writes) == 1:
+                asyncio.get_running_loop().call_soon(client.cb, char, bytearray(occupied))
+        with patch.object(FakeClient, "write_gatt_char", changing_occupancy):
+            with self.assertRaises(HAError) as error:
+                await self.coordinator.async_control("lid_close")
+        self.assertEqual(error.exception.translation_key, "control_requires_unoccupied")
+        self.assertEqual(FakeClient.instances[0].writes, [(const.QUERY, False)])
+
+    async def test_control_light_confirms_only_reported_state(self):
+        await self.coordinator.async_control("atmosphere_on", True)
+        client = FakeClient.instances[0]
+        controls = [packet for packet, response in client.writes if packet != const.QUERY]
+        self.assertEqual(controls, [bytes.fromhex("f3f40692211f33202bfc")])
+        self.assertEqual(self.coordinator.data["last_control_result"], "confirmed")
+        self.assertTrue(client.stopped and client.disconnected)
+
+    async def test_mismatching_control_is_never_replayed_or_optimistic(self):
+        await self.coordinator.async_control("atmosphere_on", False)
+        writes = FakeClient.instances[0].writes
+        controls = [packet for packet, _ in writes if packet != const.QUERY]
+        self.assertEqual(controls, [bytes.fromhex("f3f40692211f33101bfc")])
+        self.assertEqual(self.coordinator.data["last_control_result"], "readback_mismatch")
+        self.assertTrue(self.coordinator.data["fields"]["atmosphere_on"])
+        self.assertEqual(sum(packet == const.QUERY for packet, _ in writes), 4)
+
+    async def test_temperature_control_uses_fresh_baseline_and_real_readback(self):
+        payload = bytearray(FA[6:-2])
+        payload[1] = (payload[1] & ~7) | 2
+        changed = frame(0xFA, payload)
+        FakeClient.packet_script = [[FA, E9, EA], [changed, E9, EA]]
+        await self.coordinator.async_control("seat_level", 2)
+        controls = [p for p, _ in FakeClient.instances[0].writes if p != const.QUERY]
+        self.assertEqual(len(controls), 1)
+        self.assertEqual((len(controls[0]), controls[0][5], controls[0][7] & 7), (19, 25, 2))
+        self.assertTrue(protocol.valid_frame(controls[0]))
+        self.assertEqual(self.coordinator.data["fields"]["seat_level"], 2)
+        self.assertEqual(self.coordinator.data["fields"]["water_level"], 3)
+        self.assertEqual(self.coordinator.data["last_control_result"], "confirmed")
+
+    async def test_wash_requires_fresh_occupied_status(self):
+        with self.assertRaises(HAError) as error:
+            await self.coordinator.async_control("wash_hip")
+        self.assertEqual(error.exception.translation_key, "control_requires_occupied")
+        self.assertEqual(FakeClient.instances[0].writes, [(const.QUERY, False)])
+        self.assertEqual(self.coordinator.data["last_control_result"], "failed")
+        self.assertTrue(FakeClient.instances[0].disconnected)
+
+    async def test_control_missing_baseline_never_uses_saved_frames(self):
+        self.coordinator.data["frames"] = {"FA": FA.hex(), "E9": E9.hex(), "EA": EA.hex()}
+        self.coordinator.data["fields"] = {"occupancy": False, "working": False}
+        FakeClient.packets = []
+        with self.assertRaises(HAError) as error:
+            await self.coordinator.async_control("seat_level", 2)
+        self.assertEqual(error.exception.translation_key, "control_state_missing")
+        self.assertEqual(FakeClient.instances[0].writes, [(const.QUERY, False)] * 3)
+
+    async def test_lid_control_rejects_motion(self):
+        payload = bytearray(EA[6:-2])
+        payload[0] |= 0x40
+        FakeClient.packets = [FA, E9, frame(0xEA, payload)]
+        with self.assertRaises(HAError) as error:
+            await self.coordinator.async_control("lid_close")
+        self.assertEqual(error.exception.translation_key, "control_requires_unoccupied")
+        self.assertEqual(FakeClient.instances[0].writes, [(const.QUERY, False)])
+
+    async def test_level_setting_rejects_active_mode(self):
+        payload = bytearray(E9[6:-2])
+        payload[3] = 0x20
+        FakeClient.packets = [FA, frame(0xE9, payload), EA]
+        with self.assertRaises(HAError) as error:
+            await self.coordinator.async_control("water_level", 2)
+        self.assertEqual(error.exception.translation_key, "control_requires_idle")
+        self.assertEqual(FakeClient.instances[0].writes, [(const.QUERY, False)])
+
+    async def test_unknown_control_never_connects(self):
+        with self.assertRaises(HAError):
+            await self.coordinator.async_control("raw", b"arbitrary")
+        self.assertEqual(FakeClient.instances, [])
+
+    async def test_cancelled_control_cleans_up_and_shares_query_lock(self):
+        FakeClient.gate = asyncio.Event()
+        task = asyncio.create_task(self.coordinator.async_control("stop"))
+        await asyncio.sleep(0)
+        with self.assertRaises(HAError):
+            await self.coordinator.async_query()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertTrue(FakeClient.instances[0].stopped and FakeClient.instances[0].disconnected)
+        self.assertEqual(self.coordinator.data["last_control_result"], "failed")
         self.assertFalse(self.coordinator._lock.locked())
 
     async def test_restore_cache_without_connection(self):
