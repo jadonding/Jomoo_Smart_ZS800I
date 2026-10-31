@@ -4,6 +4,10 @@ services:
     container_name: homeassistant
     restart: unless-stopped
     network_mode: host
+    # Ubuntu's docker-default AppArmor profile can block host DBus AddMatch.
+    # This applies only to this container, not the host's global AppArmor policy.
+    security_opt:
+      - apparmor:unconfined
     cap_add:
       - NET_ADMIN
       - NET_RAW

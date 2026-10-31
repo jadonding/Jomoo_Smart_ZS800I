@@ -72,6 +72,14 @@ module("homeassistant.util.dt", utcnow=lambda: datetime.now(timezone.utc),
        parse_datetime=datetime.fromisoformat)
 module("bleak", BleakClient=None)
 module("bleak.exc", BleakError=BLEError)
+
+async def establish_connection(client_class, device, name, *, max_attempts, timeout):
+    assert max_attempts == 3 and timeout == const.CONNECT_TIMEOUT
+    client = client_class(device, timeout=timeout)
+    await client.__aenter__()
+    return client
+
+module("bleak_retry_connector", establish_connection=establish_connection)
 protocol = importlib.import_module(f"{PKG}.protocol")
 coordinator_module = importlib.import_module(f"{PKG}.coordinator")
 const = importlib.import_module(f"{PKG}.const")
@@ -170,6 +178,9 @@ class FakeClient:
         return self
 
     async def __aexit__(self, *args):
+        self.disconnected = True
+
+    async def disconnect(self):
         self.disconnected = True
 
     async def start_notify(self, char, cb):

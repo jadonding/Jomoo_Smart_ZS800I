@@ -31,6 +31,15 @@ class JomooConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id="user", data_schema=vol.Schema({
             vol.Required(CONF_ADDRESS): str}), errors=errors)
 
+    async def async_step_import(self, user_input):
+        """Create the same entry from an explicit YAML address."""
+        address = user_input[CONF_ADDRESS].strip()
+        if not re.fullmatch(r"(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}|[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}", address):
+            return self.async_abort(reason="unsupported_device")
+        await self._set_address(address)
+        return self.async_create_entry(title=f"JOMOO ZS800I ({self._address})",
+                                       data={CONF_ADDRESS: self._address})
+
     async def async_step_bluetooth(self, discovery_info: BluetoothServiceInfoBleak):
         if discovery_info.name != LOCAL_NAME:
             return self.async_abort(reason="unsupported_device")

@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
 from bleak import BleakClient
 from bleak.exc import BleakError
+from bleak_retry_connector import establish_connection
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -72,8 +74,23 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.data["last_result"] = "cancelled"
                 raise
             finally:
+                _LOGGER.debug("Status query finished: %s", self.data["last_result"])
                 self.async_set_updated_data(self.data)
                 await self._store.async_save(self.data)
+
+    @asynccontextmanager
+    async def _connected(self, ble_device):
+        """Use HA's recommended connector, including bounded connection retries."""
+        client = await establish_connection(
+            BleakClient, ble_device, MODEL, max_attempts=3, timeout=CONNECT_TIMEOUT
+        )
+        try:
+            yield client
+        finally:
+            try:
+                await client.disconnect()
+            except (BleakError, OSError):
+                _LOGGER.debug("Disconnect failed", exc_info=True)
 
     async def _async_query_device(self) -> None:
         ble_device = bluetooth.async_ble_device_from_address(
@@ -96,6 +113,7 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     continue
                 now = dt_util.utcnow().isoformat()
                 key = f"{command:02X}"
+                _LOGGER.debug("Received %s status frame (%d bytes)", key, len(frame))
                 self.data["frames"][key] = frame.hex().upper()[:42]
                 self.data["frame_times"][key] = now
                 self.data["last_status_time"] = now
@@ -105,7 +123,7 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 received.set()
 
         # Passing BLEDevice, never an address string, avoids Bleak implicit scan.
-        async with BleakClient(ble_device, timeout=CONNECT_TIMEOUT) as client:
+        async with self._connected(ble_device) as client:
             char = client.services.get_characteristic(CHAR_UUID)
             if char is None or char.service_uuid.lower() != SERVICE_UUID:
                 self.data["last_result"] = "missing_characteristic"

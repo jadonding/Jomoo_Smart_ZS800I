@@ -8,7 +8,10 @@
 - Windows 上实际发送状态查询，收到并校验 FA / E9 / EA。
 - 独立实物测试确认氛围灯状态位在单字段关/开操作后变化并恢复。集成暂不提供灯或其他动作控制。
 - Ubuntu 24.04 / BlueZ 5.72 主机已实际发现同一马桶，信号约 -44dBm。
-- 24项纯Python/mock单元测试通过；真实HA加载、配置流及实体显示在部署验证中，尚不把mock测试视作HA实测。
+- 24项纯Python/mock单元测试通过。
+- HA Container **2026.10.4 / Python 3.14** 上配置检查及配置流、协调器、全部实体模块的真实导入通过；Web服务返回HTTP 200。
+- HA真实配置流已创建配置项，并注册15个实体；YAML导入及查询按钮触发已验证。
+- **远端端到端读取仍未通过**：Ubuntu主机可发现目标，但容器及HA内3次建连均超时；同一时段Windows仍能读取FA/E9/EA。当前定位在远端蓝牙连接层，尚非完整可用部署，不把扫描成功或实体创建当作读数成功。
 
 ## 安装
 
@@ -28,10 +31,20 @@
 
 添加后按 **刷新状态**。启动与添加配置不自动连接，没有周期轮询。初次未刷新前动态状态为unknown。
 
+也可用可选YAML导入同一配置项（不会自动查询）：
+
+```yaml
+jomoo_zs800i:
+  address: "AA:BB:CC:DD:EE:FF"
+```
+
+重启后自动创建/复用该地址的集成项；已有配置项不会重复创建。YAML只负责首次导入，删除YAML不自动删除已有集成。
+
 ## 蓝牙部署
 
 - HA OS：使用正常工作的本机/USB蓝牙适配器。
-- HA Container：宿主机运行BlueZ，映射 `/run/dbus:/run/dbus:ro`，使用host网络；见 `compose.yaml` 示例。
+- HA Container：宿主机运行BlueZ，映射 `/run/dbus:/run/dbus:ro`，使用host网络；见 `compose.yaml` 示例。Ubuntu上实测docker-default AppArmor会阻止DBus AddMatch；示例仅对此容器设置 `apparmor:unconfined`，未更改主机全局AppArmor策略。其他系统可按实际情况省略该设置。
+- 主机防火墙需允许用户局域网访问8123/TCP；不要为了本项目停用防火墙或开放所有来源。
 - ESPHome：也可通过支持主动连接的蓝牙代理提供连接通道；本项目未做代理实物验证。
 - 设备应在HA蓝牙覆盖范围内；手机小程序占用连接时先断开手机。
 
@@ -54,7 +67,7 @@
 ## 连接与故障行为
 
 使用HA蓝牙栈提供的可连接BLEDevice，不直接调用BleakScanner，不向Bleak传裸地址触发隐式扫描。
-每次刷新独占锁，连接超时20秒；FFE1属性存在 `write` 时带响应写，否则按 `write-without-response` 写。
+每次刷新独占锁，通过HA蓝牙依赖中的 `bleak_retry_connector.establish_connection` 建连，单次连接超时20秒、最多3次尝试（含库的等待/退避，整体可能超过60秒）；FFE1属性存在 `write` 时带响应写，否则按 `write-without-response` 写。
 仅发送固定查询 `F3 F4 08 92 00 E2 00 00 00 00 7C FC`。
 从发送起8秒预算内等待本次有效FA/E9/EA，首包后额外收集0.4秒突发通知，随后释放连接。
 收到有效通知只证明本次连接的状态接收有效，不独立证明所有通知都由查询触发。
