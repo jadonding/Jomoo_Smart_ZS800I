@@ -1,0 +1,16 @@
+{
+  "domain": "jomoo_zs800i",
+  "name": "JOMOO ZS800I (237371, read-only)",
+  "version": "0.1.0",
+  "config_flow": true,
+  "documentation": "https://github.com/jadonding/Jomoo_Smart_ZS800I",
+  "issue_tracker": "https://github.com/jadonding/Jomoo_Smart_ZS800I/issues",
+  "dependencies": ["bluetooth", "bluetooth_adapters"],
+  "requirements": [],
+  "codeowners": [],
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "bluetooth": [
+    {"local_name": "JOMOO_SMART_237371", "connectable": true}
+  ]
+}

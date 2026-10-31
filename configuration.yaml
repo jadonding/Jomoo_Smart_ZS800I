@@ -1,0 +1,12 @@
+# Initial Home Assistant Container configuration.
+default_config:
+
+homeassistant:
+  name: Home
+  time_zone: Asia/Shanghai
+  country: CN
+
+logger:
+  default: warning
+  logs:
+    custom_components.jomoo_zs800i: debug
