@@ -2,7 +2,7 @@
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.const import EntityCategory
 
-from .const import MODEL
+from .const import MODEL, QUERY_RESULTS
 from .entity import JomooEntity
 
 
@@ -19,6 +19,9 @@ class JomooSensor(JomooEntity, SensorEntity):
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
         if key == "last_status_time":
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
+        elif key == "last_query_result":
+            self._attr_device_class = SensorDeviceClass.ENUM
+            self._attr_options = list(QUERY_RESULTS)
         self._attr_icon = "mdi:toilet"
 
     @property

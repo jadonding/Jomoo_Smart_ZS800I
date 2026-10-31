@@ -1,0 +1,50 @@
+title: 九牧马桶
+views:
+  - title: 马桶状态
+    path: status
+    icon: mdi:toilet
+    cards:
+      - type: markdown
+        content: |
+          ## 九牧 ZS800I
+          本地蓝牙连接。以下为**上次查询的状态快照**；点击按钮读取最新状态。
+      - type: button
+        entity: button.jomoo_zs800i_refresh_status
+        name: 刷新马桶状态
+        icon: mdi:refresh
+        show_state: false
+        tap_action:
+          action: perform-action
+          perform_action: button.press
+          target:
+            entity_id: button.jomoo_zs800i_refresh_status
+      - type: entities
+        title: 查询状态
+        show_header_toggle: false
+        entities:
+          - entity: sensor.jomoo_zs800i_last_query_result
+            name: 查询结果
+          - entity: sensor.jomoo_zs800i_last_status_time
+            name: 最后更新时间
+      - type: entities
+        title: 马桶状态
+        show_header_toggle: false
+        entities:
+          - entity: binary_sensor.jomoo_zs800i_occupancy_source_derived
+            name: 是否着座
+          - entity: binary_sensor.jomoo_zs800i_lid_open_source_derived
+            name: 盖板打开
+          - entity: binary_sensor.jomoo_zs800i_seat_ring_open_source_derived
+            name: 座圈打开
+          - entity: binary_sensor.jomoo_zs800i_atmosphere_light
+            name: 氛围灯
+      - type: entities
+        title: 温度档位
+        show_header_toggle: false
+        entities:
+          - entity: sensor.jomoo_zs800i_water_heating_level_source_derived
+            name: 水温档位
+          - entity: sensor.jomoo_zs800i_seat_heating_level_source_derived
+            name: 座温档位
+          - entity: sensor.jomoo_zs800i_air_heating_level_source_derived
+            name: 风温档位

@@ -2,28 +2,91 @@
   "title": "JOMOO ZS800I",
   "config": {
     "step": {
-      "user": {"title": "Add JOMOO ZS800I (237371)", "description": "Enter the Bluetooth address of model 237371 only. No connection or scan is started by this form. A connectable device must already be visible to Home Assistant Bluetooth before refreshing.", "data": {"address": "Bluetooth address"}},
-      "bluetooth_confirm": {"title": "JOMOO ZS800I discovered", "description": "Add device {address}? Status is queried only when you press Refresh status."}
+      "user": {
+        "title": "Add JOMOO ZS800I (237371)",
+        "description": "Enter the Bluetooth address of model 237371 only. No connection or scan is started by this form. A connectable device must already be visible to Home Assistant Bluetooth before refreshing.",
+        "data": {
+          "address": "Bluetooth address"
+        }
+      },
+      "bluetooth_confirm": {
+        "title": "JOMOO ZS800I discovered",
+        "description": "Add device {address}? Status is queried only when you press Refresh status."
+      }
     },
-    "error": {"invalid_address": "Enter a Bluetooth MAC address or CoreBluetooth UUID."},
-    "abort": {"already_configured": "This device is already configured.", "unsupported_device": "Only JOMOO_SMART_237371 is supported."}
+    "error": {
+      "invalid_address": "Enter a Bluetooth MAC address or CoreBluetooth UUID."
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "unsupported_device": "Only JOMOO_SMART_237371 is supported."
+    }
   },
   "entity": {
-    "button": {"refresh_status": {"name": "Refresh status"}},
+    "button": {
+      "refresh_status": {
+        "name": "Refresh status"
+      }
+    },
     "sensor": {
-      "last_status_time": {"name": "Last status time"},
-      "raw_fa": {"name": "Raw FA"}, "raw_e9": {"name": "Raw E9"}, "raw_ea": {"name": "Raw EA"},
-      "address": {"name": "Bluetooth address"}, "model": {"name": "Model code"},
-      "last_query_result": {"name": "Last query result"},
-      "water_level": {"name": "Water heating level (source-derived)"},
-      "seat_level": {"name": "Seat heating level (source-derived)"},
-      "air_level": {"name": "Air heating level (source-derived)"}
+      "last_status_time": {
+        "name": "Last status time"
+      },
+      "raw_fa": {
+        "name": "Raw FA"
+      },
+      "raw_e9": {
+        "name": "Raw E9"
+      },
+      "raw_ea": {
+        "name": "Raw EA"
+      },
+      "address": {
+        "name": "Bluetooth address"
+      },
+      "model": {
+        "name": "Model code"
+      },
+      "last_query_result": {
+        "name": "Last query result",
+        "state": {
+          "never_queried": "Not queried yet",
+          "querying": "Querying",
+          "valid_status_received": "Query successful",
+          "not_discovered": "Device not discovered",
+          "no_valid_status": "No valid status received",
+          "connection_timeout": "Connection timed out",
+          "connection_error": "Connection failed",
+          "missing_characteristic": "Bluetooth service mismatch",
+          "notify_not_supported": "Notifications not supported",
+          "write_not_supported": "Query writes not supported",
+          "unexpected_error": "Query error",
+          "cancelled": "Query cancelled"
+        }
+      },
+      "water_level": {
+        "name": "Water heating level (source-derived)"
+      },
+      "seat_level": {
+        "name": "Seat heating level (source-derived)"
+      },
+      "air_level": {
+        "name": "Air heating level (source-derived)"
+      }
     },
     "binary_sensor": {
-      "atmosphere_on": {"name": "Atmosphere light"},
-      "occupancy": {"name": "Occupancy (source-derived)"},
-      "lid_open": {"name": "Lid open (source-derived)"},
-      "ring_open": {"name": "Seat ring open (source-derived)"}
+      "atmosphere_on": {
+        "name": "Atmosphere light"
+      },
+      "occupancy": {
+        "name": "Occupancy (source-derived)"
+      },
+      "lid_open": {
+        "name": "Lid open (source-derived)"
+      },
+      "ring_open": {
+        "name": "Seat ring open (source-derived)"
+      }
     }
   }
 }

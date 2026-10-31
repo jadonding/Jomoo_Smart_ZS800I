@@ -26,7 +26,7 @@ class JomooConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors[CONF_ADDRESS] = "invalid_address"
             else:
                 await self._set_address(address)
-                return self.async_create_entry(title=f"JOMOO ZS800I ({self._address})",
+                return self.async_create_entry(title=f"九牧 ZS800I ({self._address})",
                                                data={CONF_ADDRESS: self._address})
         return self.async_show_form(step_id="user", data_schema=vol.Schema({
             vol.Required(CONF_ADDRESS): str}), errors=errors)
@@ -37,19 +37,19 @@ class JomooConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not re.fullmatch(r"(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}|[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}", address):
             return self.async_abort(reason="unsupported_device")
         await self._set_address(address)
-        return self.async_create_entry(title=f"JOMOO ZS800I ({self._address})",
+        return self.async_create_entry(title=f"九牧 ZS800I ({self._address})",
                                        data={CONF_ADDRESS: self._address})
 
     async def async_step_bluetooth(self, discovery_info: BluetoothServiceInfoBleak):
         if discovery_info.name != LOCAL_NAME:
             return self.async_abort(reason="unsupported_device")
         await self._set_address(discovery_info.address)
-        self.context["title_placeholders"] = {"name": f"JOMOO ZS800I ({self._address})"}
+        self.context["title_placeholders"] = {"name": f"九牧 ZS800I ({self._address})"}
         return await self.async_step_bluetooth_confirm()
 
     async def async_step_bluetooth_confirm(self, user_input=None):
         if user_input is not None:
-            return self.async_create_entry(title=f"JOMOO ZS800I ({self._address})",
+            return self.async_create_entry(title=f"九牧 ZS800I ({self._address})",
                                            data={CONF_ADDRESS: self._address})
         return self.async_show_form(step_id="bluetooth_confirm",
                                     description_placeholders={"address": self._address})

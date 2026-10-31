@@ -26,6 +26,10 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    if entry.title.startswith("JOMOO ZS800I ("):
+        hass.config_entries.async_update_entry(
+            entry, title=f"九牧 ZS800I ({entry.data[CONF_ADDRESS]})"
+        )
     coordinator = JomooCoordinator(hass, entry)
     await coordinator.async_load()
     entry.runtime_data = coordinator

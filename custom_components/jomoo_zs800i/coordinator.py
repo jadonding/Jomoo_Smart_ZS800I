@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from time import monotonic
 from datetime import datetime
 from typing import Any
 
@@ -93,6 +94,19 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.debug("Disconnect failed", exc_info=True)
 
     async def _async_query_device(self) -> None:
+        # A historical BLEDevice alone is insufficient for HA's connection-slot
+        # manager. Request a fresh advertisement through HA's shared scanner,
+        # only for this manual query; never construct an independent scanner.
+        started = monotonic()
+        try:
+            await bluetooth.async_process_advertisements(
+                self.hass, lambda info: info.time >= started,
+                {"address": self.address, "connectable": True},
+                bluetooth.BluetoothScanningMode.ACTIVE, CONNECT_TIMEOUT,
+            )
+        except TimeoutError:
+            self.data["last_result"] = "not_discovered"
+            return
         ble_device = bluetooth.async_ble_device_from_address(
             self.hass, self.address, connectable=True
         )

@@ -2,28 +2,91 @@
   "title": "九牧 ZS800I",
   "config": {
     "step": {
-      "user": {"title": "添加九牧 ZS800I（237371）", "description": "仅适用型号237371。填写蓝牙地址，本表单不建立连接、不发起扫描。刷新前设备须已被HA蓝牙以可连接方式发现。", "data": {"address": "蓝牙地址"}},
-      "bluetooth_confirm": {"title": "发现九牧 ZS800I", "description": "添加设备 {address}？只有按下刷新状态按钮才连接查询。"}
+      "user": {
+        "title": "添加九牧 ZS800I（237371）",
+        "description": "仅适用型号237371。填写蓝牙地址，本表单不建立连接、不发起扫描。刷新前设备须已被HA蓝牙以可连接方式发现。",
+        "data": {
+          "address": "蓝牙地址"
+        }
+      },
+      "bluetooth_confirm": {
+        "title": "发现九牧 ZS800I",
+        "description": "添加设备 {address}？只有按下刷新状态按钮才连接查询。"
+      }
     },
-    "error": {"invalid_address": "请输入蓝牙MAC地址或CoreBluetooth UUID。"},
-    "abort": {"already_configured": "设备已配置。", "unsupported_device": "仅支持JOMOO_SMART_237371。"}
+    "error": {
+      "invalid_address": "请输入蓝牙MAC地址或CoreBluetooth UUID。"
+    },
+    "abort": {
+      "already_configured": "设备已配置。",
+      "unsupported_device": "仅支持JOMOO_SMART_237371。"
+    }
   },
   "entity": {
-    "button": {"refresh_status": {"name": "刷新状态"}},
+    "button": {
+      "refresh_status": {
+        "name": "刷新状态"
+      }
+    },
     "sensor": {
-      "last_status_time": {"name": "最后状态时间"},
-      "raw_fa": {"name": "原始 FA"}, "raw_e9": {"name": "原始 E9"}, "raw_ea": {"name": "原始 EA"},
-      "address": {"name": "蓝牙地址"}, "model": {"name": "型号代码"},
-      "last_query_result": {"name": "最后查询结果"},
-      "water_level": {"name": "水温档位（源码推导）"},
-      "seat_level": {"name": "座温档位（源码推导）"},
-      "air_level": {"name": "风温档位（源码推导）"}
+      "last_status_time": {
+        "name": "最后状态时间"
+      },
+      "raw_fa": {
+        "name": "原始 FA"
+      },
+      "raw_e9": {
+        "name": "原始 E9"
+      },
+      "raw_ea": {
+        "name": "原始 EA"
+      },
+      "address": {
+        "name": "蓝牙地址"
+      },
+      "model": {
+        "name": "型号代码"
+      },
+      "last_query_result": {
+        "name": "最后查询结果",
+        "state": {
+          "never_queried": "尚未查询",
+          "querying": "正在查询",
+          "valid_status_received": "查询成功",
+          "not_discovered": "未发现马桶",
+          "no_valid_status": "未收到有效状态",
+          "connection_timeout": "连接超时",
+          "connection_error": "连接失败",
+          "missing_characteristic": "蓝牙服务不匹配",
+          "notify_not_supported": "不支持状态通知",
+          "write_not_supported": "不支持查询写入",
+          "unexpected_error": "查询异常",
+          "cancelled": "查询已取消"
+        }
+      },
+      "water_level": {
+        "name": "水温档位"
+      },
+      "seat_level": {
+        "name": "座温档位"
+      },
+      "air_level": {
+        "name": "风温档位"
+      }
     },
     "binary_sensor": {
-      "atmosphere_on": {"name": "氛围灯"},
-      "occupancy": {"name": "着座（源码推导）"},
-      "lid_open": {"name": "盖打开（源码推导）"},
-      "ring_open": {"name": "圈打开（源码推导）"}
+      "atmosphere_on": {
+        "name": "氛围灯"
+      },
+      "occupancy": {
+        "name": "着座"
+      },
+      "lid_open": {
+        "name": "盖打开"
+      },
+      "ring_open": {
+        "name": "圈打开"
+      }
     }
   }
 }

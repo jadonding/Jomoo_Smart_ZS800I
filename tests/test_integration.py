@@ -25,7 +25,13 @@ module("custom_components", __path__=[str(ROOT / "custom_components")])
 module(PKG, __path__=[str(COMPONENT)])
 module("homeassistant", __path__=[])
 module("homeassistant.components", __path__=[])
-bluetooth = module("homeassistant.components.bluetooth", async_ble_device_from_address=lambda *a, **kw: None)
+async def process_advertisements(*args, **kwargs):
+    return None
+
+bluetooth = module("homeassistant.components.bluetooth",
+                   async_ble_device_from_address=lambda *a, **kw: None,
+                   async_process_advertisements=process_advertisements,
+                   BluetoothScanningMode=types.SimpleNamespace(ACTIVE="active"))
 module("homeassistant.core", HomeAssistant=object, callback=lambda f: f)
 
 
@@ -253,6 +259,28 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(self.coordinator.last_status_time)
         self.assertIsNotNone(self.coordinator._store.saved)
 
+    async def test_fresh_advertisement_is_requested_only_on_refresh(self):
+        calls = []
+        async def receive(hass, callback, matcher, mode, timeout):
+            import time
+            calls.append((matcher, mode, timeout))
+            self.assertTrue(callback(types.SimpleNamespace(time=time.monotonic())))
+            self.assertFalse(callback(types.SimpleNamespace(time=0)))
+        with patch.object(bluetooth, "async_process_advertisements", receive):
+            await self.coordinator.async_load()
+            self.assertEqual(calls, [])
+            await self.coordinator.async_query()
+        self.assertEqual(calls, [({"address": self.coordinator.address, "connectable": True},
+                                 "active", const.CONNECT_TIMEOUT)])
+
+    async def test_fresh_advertisement_timeout_never_connects(self):
+        async def missing(*args):
+            raise TimeoutError
+        with patch.object(bluetooth, "async_process_advertisements", missing):
+            await self.coordinator.async_query()
+        self.assertEqual(self.coordinator.data["last_result"], "not_discovered")
+        self.assertEqual(FakeClient.instances, [])
+
     async def test_write_response_property(self):
         FakeClient.props = ["notify", "write", "write-without-response"]
         await self.coordinator.async_query()
@@ -357,6 +385,15 @@ class PackagingTests(unittest.TestCase):
         for language in ("en", "zh-Hans"):
             translated = json.loads((COMPONENT / "translations" / f"{language}.json").read_text(encoding="utf-8"))
             self.assertEqual(keys(english), keys(translated))
+
+    def test_query_result_translations_cover_all_machine_states(self):
+        for name in ("en", "zh-Hans"):
+            data = json.loads((COMPONENT / "translations" / f"{name}.json").read_text(encoding="utf-8"))
+            states = data["entity"]["sensor"]["last_query_result"]["state"]
+            self.assertEqual(set(states), set(const.QUERY_RESULTS))
+            if name == "zh-Hans":
+                self.assertEqual(states["valid_status_received"], "查询成功")
+                self.assertNotIn("源码推导", data["entity"]["sensor"]["seat_level"]["name"])
 
     def test_no_scanner_or_periodic_interval(self):
         for source in COMPONENT.glob("*.py"):

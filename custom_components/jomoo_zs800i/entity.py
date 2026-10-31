@@ -17,7 +17,7 @@ class JomooEntity(CoordinatorEntity):
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, coordinator.address)},
             connections={(CONNECTION_BLUETOOTH, coordinator.address)},
-            manufacturer="JOMOO", model=f"ZS800I ({MODEL})", name="JOMOO ZS800I",
+            manufacturer="九牧 JOMOO", model=f"ZS800I ({MODEL})", name="九牧智能马桶 ZS800I",
         )
 
     @property
