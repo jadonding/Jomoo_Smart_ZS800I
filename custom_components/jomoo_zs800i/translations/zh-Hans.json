@@ -88,5 +88,10 @@
         "name": "圈打开"
       }
     }
+  },
+  "exceptions": {
+    "query_in_progress": {
+      "message": "马桶正在查询，请等待本次完成后再刷新。"
+    }
   }
 }

@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from time import monotonic
 from datetime import datetime
 from typing import Any
 
@@ -56,7 +55,7 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_query(self) -> None:
         """Send only the fixed query; preserve old state on all failures."""
         if self._lock.locked():
-            raise HomeAssistantError("A JOMOO status query is already in progress")
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="query_in_progress")
         async with self._lock:
             self.data["last_query_time"] = dt_util.utcnow().isoformat()
             self.data["last_result"] = "querying"
@@ -93,17 +92,38 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             except (BleakError, OSError):
                 _LOGGER.debug("Disconnect failed", exc_info=True)
 
-    async def _async_query_device(self) -> None:
-        # A historical BLEDevice alone is insufficient for HA's connection-slot
-        # manager. Request a fresh advertisement through HA's shared scanner,
-        # only for this manual query; never construct an independent scanner.
-        started = monotonic()
-        try:
-            await bluetooth.async_process_advertisements(
-                self.hass, lambda info: info.time >= started,
+    async def _async_wait_for_advertisement(self):
+        """Refresh HA's connection source, including unchanged advertisements."""
+        register_every = getattr(bluetooth, "async_register_advertisement_callback", None)
+        request_sweep = getattr(bluetooth, "async_request_active_scan", None)
+        if register_every is None or request_sweep is None:
+            # Older HA APIs replay cached service data but do not dispatch every
+            # identical packet, so never demand a timestamp change there.
+            return await bluetooth.async_process_advertisements(
+                self.hass, lambda info: True,
                 {"address": self.address, "connectable": True},
                 bluetooth.BluetoothScanningMode.ACTIVE, CONNECT_TIMEOUT,
             )
+        fresh = asyncio.get_running_loop().create_future()
+
+        def received(info):
+            if info.connectable and not fresh.done():
+                fresh.set_result(info)
+
+        cancel = register_every(self.hass, received, self.address)
+        sweep = self.hass.async_create_task(request_sweep(self.hass, CONNECT_TIMEOUT))
+        try:
+            async with asyncio.timeout(CONNECT_TIMEOUT):
+                return await fresh
+        finally:
+            cancel()
+            sweep.cancel()
+            await asyncio.gather(sweep, return_exceptions=True)
+
+    async def _async_query_device(self) -> None:
+        # Use HA's shared scanner on demand, never an independent scanner.
+        try:
+            await self._async_wait_for_advertisement()
         except TimeoutError:
             self.data["last_result"] = "not_discovered"
             return

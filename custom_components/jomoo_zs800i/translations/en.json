@@ -88,5 +88,10 @@
         "name": "Seat ring open (source-derived)"
       }
     }
+  },
+  "exceptions": {
+    "query_in_progress": {
+      "message": "A toilet status query is already in progress. Wait for it to finish before refreshing again."
+    }
   }
 }

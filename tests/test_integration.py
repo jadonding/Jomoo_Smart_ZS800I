@@ -36,7 +36,10 @@ module("homeassistant.core", HomeAssistant=object, callback=lambda f: f)
 
 
 class HAError(Exception):
-    pass
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args)
+        self.translation_domain = kwargs.get("translation_domain")
+        self.translation_key = kwargs.get("translation_key")
 
 
 class BLEError(Exception):
@@ -232,7 +235,8 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         for item in self.patches:
             item.start()
         self.entry = types.SimpleNamespace(data={"address": "AA:BB:CC:DD:EE:FF"}, entry_id="test")
-        self.coordinator = coordinator_module.JomooCoordinator(object(), self.entry)
+        self.hass = types.SimpleNamespace(async_create_task=asyncio.create_task)
+        self.coordinator = coordinator_module.JomooCoordinator(self.hass, self.entry)
 
     async def asyncTearDown(self):
         for item in reversed(self.patches):
@@ -265,13 +269,51 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
             import time
             calls.append((matcher, mode, timeout))
             self.assertTrue(callback(types.SimpleNamespace(time=time.monotonic())))
-            self.assertFalse(callback(types.SimpleNamespace(time=0)))
+            self.assertTrue(callback(types.SimpleNamespace(time=0)))
         with patch.object(bluetooth, "async_process_advertisements", receive):
             await self.coordinator.async_load()
             self.assertEqual(calls, [])
             await self.coordinator.async_query()
         self.assertEqual(calls, [({"address": self.coordinator.address, "connectable": True},
                                  "active", const.CONNECT_TIMEOUT)])
+
+    async def test_unchanged_advertisements_refresh_modern_ha_source(self):
+        events = []
+        callbacks = []
+        def register(hass, callback, address):
+            self.assertEqual(address, self.coordinator.address)
+            callbacks.append(callback)
+            events.append("register")
+            return lambda: events.append("unregister")
+        async def sweep(hass, duration):
+            events.append("sweep")
+            # Identical packets need not have changed service data.
+            callbacks[0](types.SimpleNamespace(connectable=False))
+            callbacks[0](types.SimpleNamespace(connectable=True))
+        with patch.object(bluetooth, "async_register_advertisement_callback", register, create=True), \
+             patch.object(bluetooth, "async_request_active_scan", sweep, create=True):
+            await self.coordinator.async_load()
+            self.assertEqual(events, [])
+            await self.coordinator.async_query()
+        self.assertEqual(events, ["register", "sweep", "unregister"])
+        self.assertEqual(self.coordinator.data["last_result"], "valid_status_received")
+
+    async def test_modern_sweep_timeout_cleans_up(self):
+        events = []
+        def register(*args):
+            return lambda: events.append("unregister")
+        async def sweep(*args):
+            try:
+                await asyncio.Future()
+            finally:
+                events.append("cancel_sweep")
+        with patch.object(bluetooth, "async_register_advertisement_callback", register, create=True), \
+             patch.object(bluetooth, "async_request_active_scan", sweep, create=True), \
+             patch.object(coordinator_module, "CONNECT_TIMEOUT", 0.005):
+            await self.coordinator.async_query()
+        self.assertEqual(self.coordinator.data["last_result"], "not_discovered")
+        self.assertEqual(FakeClient.instances, [])
+        self.assertEqual(events, ["unregister", "cancel_sweep"])
 
     async def test_fresh_advertisement_timeout_never_connects(self):
         async def missing(*args):
@@ -348,8 +390,10 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         FakeClient.gate = asyncio.Event()
         task = asyncio.create_task(self.coordinator.async_query())
         await asyncio.sleep(0)
-        with self.assertRaises(HAError):
+        with self.assertRaises(HAError) as busy:
             await self.coordinator.async_query()
+        self.assertEqual(busy.exception.translation_domain, const.DOMAIN)
+        self.assertEqual(busy.exception.translation_key, "query_in_progress")
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await task
