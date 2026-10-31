@@ -3,197 +3,500 @@ views:
 - title: 马桶控制
   path: status
   icon: mdi:toilet
-  cards:
-  - type: markdown
-    content: '## 九牧 ZS800I 控制
-
-      灯与风温0/1/2档已通过设备回读验证；其他功能基于237371协议，待逐项实物核对。默认持续保持蓝牙连接并启动预热；厂商小程序直连前按“释放蓝牙连接”，下次HA操作才重新连接。
-
-      盖圈操作存在联动，关盖还可能触发已开启的关盖冲厕。显示值是最近回读快照；操作结束后查看控制结果。'
-  - type: button
-    entity: button.jomoo_zs800i_refresh_status
-    name: 刷新状态
-    show_state: false
-    tap_action:
-      action: perform-action
-      perform_action: button.press
-      target:
-        entity_id: button.jomoo_zs800i_refresh_status
-  - type: button
-    entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_release_bluetooth_connection
-    name: 释放蓝牙连接
-    show_state: false
-    tap_action:
-      action: perform-action
-      perform_action: button.press
-      target:
-        entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_release_bluetooth_connection
-    icon: mdi:bluetooth-off
-  - type: markdown
-    content: '蓝牙：{{ ''已连接'' if state_attr(''sensor.jiu_mu_zhi_neng_ma_tong_zs800i_last_control_result'',
-      ''bluetooth_connected'') else ''未连接 / 正在预热'' }}
-
-
-      最近命令发出：{{ state_attr(''sensor.jiu_mu_zhi_neng_ma_tong_zs800i_last_control_result'',
-      ''last_control_write_ms'') }} ms；前台返回：{{ state_attr(''sensor.jiu_mu_zhi_neng_ma_tong_zs800i_last_control_result'',
-      ''last_control_total_ms'') }} ms。'
-  - type: entities
-    title: 查询与控制结果
-    show_header_toggle: false
-    entities:
-    - entity: sensor.jomoo_zs800i_last_query_result
-      name: 最后查询结果
-    - entity: sensor.jiu_mu_zhi_neng_ma_tong_zs800i_last_control_result
-      name: 最后控制结果
-    - entity: sensor.jomoo_zs800i_last_status_time
-      name: 最后状态时间
+  type: sections
+  max_columns: 2
+  sections:
   - type: grid
-    columns: 3
-    square: false
     cards:
-    - type: button
+    - type: heading
+      heading: 日常使用
+      icon: mdi:gesture-tap
+      heading_style: title
+    - type: tile
       entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_stop
-      name: 停止清洗/烘干
-      show_state: false
-      tap_action:
+      name: 停止
+      icon: mdi:stop-circle-outline
+      color: red
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 1
+      hide_state: true
+      tap_action: &id001
         action: perform-action
         perform_action: button.press
         target:
           entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_stop
-    - type: button
-      entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_large_flush
-      name: 大冲
-      show_state: false
-      tap_action:
+      icon_tap_action: *id001
+      hold_action:
+        action: none
+      double_tap_action:
+        action: none
+    - type: tile
+      entity: button.jomoo_zs800i_refresh_status
+      name: 刷新状态
+      icon: mdi:refresh
+      color: grey
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 1
+      hide_state: true
+      tap_action: &id002
         action: perform-action
         perform_action: button.press
         target:
-          entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_large_flush
-    - type: button
-      entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_small_flush
-      name: 小冲
-      show_state: false
-      tap_action:
-        action: perform-action
-        perform_action: button.press
-        target:
-          entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_small_flush
-    - type: button
-      entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_open_lid_preserve_ring_state
-      name: 打开盖板（保留圈状态）
-      show_state: false
-      tap_action:
-        action: perform-action
-        perform_action: button.press
-        target:
-          entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_open_lid_preserve_ring_state
-    - type: button
-      entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_close_lid_and_ring
-      name: 关盖关圈
-      show_state: false
-      tap_action:
-        action: perform-action
-        perform_action: button.press
-        target:
-          entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_close_lid_and_ring
-    - type: button
-      entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_open_lid_and_ring
-      name: 开盖开圈
-      show_state: false
-      tap_action:
-        action: perform-action
-        perform_action: button.press
-        target:
-          entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_open_lid_and_ring
-    - type: button
-      entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_open_lid_close_ring
-      name: 开盖关圈
-      show_state: false
-      tap_action:
-        action: perform-action
-        perform_action: button.press
-        target:
-          entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_open_lid_close_ring
-    - type: button
+          entity_id: button.jomoo_zs800i_refresh_status
+      icon_tap_action: *id002
+      hold_action:
+        action: none
+      double_tap_action:
+        action: none
+    - type: tile
       entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_hip_wash
       name: 臀洗
-      show_state: false
-      tap_action:
+      icon: mdi:shower-head
+      color: cyan
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 1
+      hide_state: true
+      tap_action: &id003
         action: perform-action
         perform_action: button.press
         target:
           entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_hip_wash
-    - type: button
+      icon_tap_action: *id003
+      hold_action:
+        action: none
+      double_tap_action:
+        action: none
+    - type: tile
       entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_feminine_wash
       name: 妇洗
-      show_state: false
-      tap_action:
+      icon: mdi:human-female
+      color: pink
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 1
+      hide_state: true
+      tap_action: &id004
         action: perform-action
         perform_action: button.press
         target:
           entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_feminine_wash
-    - type: button
-      entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_automatic_hip_wash
-      name: 自动臀洗
-      show_state: false
-      tap_action:
-        action: perform-action
-        perform_action: button.press
-        target:
-          entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_automatic_hip_wash
-    - type: button
-      entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_automatic_feminine_wash
-      name: 自动妇洗
-      show_state: false
-      tap_action:
-        action: perform-action
-        perform_action: button.press
-        target:
-          entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_automatic_feminine_wash
-    - type: button
+      icon_tap_action: *id004
+      hold_action:
+        action: none
+      double_tap_action:
+        action: none
+    - type: tile
       entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_warm_air_drying
       name: 暖风烘干
-      show_state: false
-      tap_action:
+      icon: mdi:fan
+      color: orange
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 1
+      hide_state: true
+      tap_action: &id005
         action: perform-action
         perform_action: button.press
         target:
           entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_warm_air_drying
-  - type: entities
-    title: 温度档位（不是摄氏度）
-    show_header_toggle: false
-    entities:
-    - entity: number.jiu_mu_zhi_neng_ma_tong_zs800i_water_heating_level_control
-      name: 水温档位设置
-    - entity: number.jiu_mu_zhi_neng_ma_tong_zs800i_seat_heating_level_control
-      name: 座温档位设置
-    - entity: number.jiu_mu_zhi_neng_ma_tong_zs800i_air_heating_level_control
-      name: 风温档位设置
-  - type: entities
-    title: 功能开关
-    show_header_toggle: false
-    entities:
-    - entity: switch.jiu_mu_zhi_neng_ma_tong_zs800i_atmosphere_light_control
-      name: 氛围灯控制
-    - entity: switch.jiu_mu_zhi_neng_ma_tong_zs800i_foot_sensor
+      icon_tap_action: *id005
+      hold_action:
+        action: none
+      double_tap_action:
+        action: none
+    - type: tile
+      entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_large_flush
+      name: 大冲水
+      icon: mdi:water
+      color: blue
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 1
+      hide_state: true
+      tap_action: &id006
+        action: perform-action
+        perform_action: button.press
+        target:
+          entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_large_flush
+      icon_tap_action: *id006
+      hold_action:
+        action: none
+      double_tap_action:
+        action: none
+    - type: tile
+      entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_automatic_hip_wash
+      name: 自动臀洗
+      icon: mdi:autorenew
+      color: cyan
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 1
+      hide_state: true
+      tap_action: &id007
+        action: perform-action
+        perform_action: button.press
+        target:
+          entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_automatic_hip_wash
+      icon_tap_action: *id007
+      hold_action:
+        action: none
+      double_tap_action:
+        action: none
+    - type: tile
+      entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_automatic_feminine_wash
+      name: 自动妇洗
+      icon: mdi:autorenew
+      color: pink
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 1
+      hide_state: true
+      tap_action: &id008
+        action: perform-action
+        perform_action: button.press
+        target:
+          entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_automatic_feminine_wash
+      icon_tap_action: *id008
+      hold_action:
+        action: none
+      double_tap_action:
+        action: none
+    - type: tile
+      entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_small_flush
+      name: 小冲水
+      icon: mdi:water-outline
+      color: blue
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 1
+      hide_state: true
+      tap_action: &id009
+        action: perform-action
+        perform_action: button.press
+        target:
+          entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_small_flush
+      icon_tap_action: *id009
+      hold_action:
+        action: none
+      double_tap_action:
+        action: none
+    - type: tile
+      entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_release_bluetooth_connection
+      name: 释放蓝牙连接
+      icon: mdi:bluetooth-off
+      color: grey
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 1
+      hide_state: true
+      tap_action: &id010
+        action: perform-action
+        perform_action: button.press
+        target:
+          entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_release_bluetooth_connection
+      icon_tap_action: *id010
+      hold_action:
+        action: none
+      double_tap_action:
+        action: none
+  - type: grid
+    cards:
+    - type: heading
+      heading: 舒适温度
+      icon: mdi:thermometer
+      heading_style: title
+    - type: tile
+      entity: number.jiu_mu_zhi_neng_ma_tong_zs800i_water_heating_level_control
+      name: 水温 · 0–5 档
+      icon: mdi:thermometer-water
+      color: blue
+      vertical: false
+      grid_options:
+        columns: 12
+        rows: 2
+      features:
+      - type: numeric-input
+        style: slider
+      features_position: bottom
+    - type: tile
+      entity: number.jiu_mu_zhi_neng_ma_tong_zs800i_seat_heating_level_control
+      name: 座温 · 0–5 档
+      icon: mdi:seat
+      color: deep-orange
+      vertical: false
+      grid_options:
+        columns: 12
+        rows: 2
+      features:
+      - type: numeric-input
+        style: slider
+      features_position: bottom
+    - type: tile
+      entity: number.jiu_mu_zhi_neng_ma_tong_zs800i_air_heating_level_control
+      name: 风温 · 0–3 档
+      icon: mdi:fan
+      color: orange
+      vertical: false
+      grid_options:
+        columns: 12
+        rows: 2
+      features:
+      - type: numeric-input
+        style: slider
+      features_position: bottom
+    - type: markdown
+      content: 拖动滑块后松手发送；**0 为关闭加热**。数值以设备回读为准，并非摄氏度。
+      grid_options:
+        columns: 12
+        rows: auto
+    - type: entities
+      show_header_toggle: false
+      entities:
+      - entity: sensor.jiu_mu_zhi_neng_ma_tong_zs800i_last_control_result
+        name: 最近控制结果
+        icon: mdi:check-circle-outline
+      - entity: sensor.jomoo_zs800i_last_status_time
+        name: 最近状态更新
+        icon: mdi:clock-outline
+      grid_options:
+        columns: 12
+        rows: auto
+  - type: grid
+    cards:
+    - type: heading
+      heading: 盖板与座圈
+      icon: mdi:toilet
+      heading_style: title
+    - type: tile
+      entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_open_lid_preserve_ring_state
+      name: 打开盖板
+      icon: mdi:arrow-up-bold-box-outline
+      color: teal
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 1
+      hide_state: true
+      tap_action: &id011
+        action: perform-action
+        perform_action: button.press
+        target:
+          entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_open_lid_preserve_ring_state
+      icon_tap_action: *id011
+      hold_action:
+        action: none
+      double_tap_action:
+        action: none
+    - type: tile
+      entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_close_lid_and_ring
+      name: 关盖关圈
+      icon: mdi:arrow-down-bold-box-outline
+      color: teal
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 1
+      hide_state: true
+      tap_action: &id012
+        action: perform-action
+        perform_action: button.press
+        target:
+          entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_close_lid_and_ring
+      icon_tap_action: *id012
+      hold_action:
+        action: none
+      double_tap_action:
+        action: none
+    - type: tile
+      entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_open_lid_and_ring
+      name: 开盖开圈
+      icon: mdi:arrow-up-bold-outline
+      color: teal
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 1
+      hide_state: true
+      tap_action: &id013
+        action: perform-action
+        perform_action: button.press
+        target:
+          entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_open_lid_and_ring
+      icon_tap_action: *id013
+      hold_action:
+        action: none
+      double_tap_action:
+        action: none
+    - type: tile
+      entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_open_lid_close_ring
+      name: 开盖关圈
+      icon: mdi:arrow-down-bold-outline
+      color: teal
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 1
+      hide_state: true
+      tap_action: &id014
+        action: perform-action
+        perform_action: button.press
+        target:
+          entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_open_lid_close_ring
+      icon_tap_action: *id014
+      hold_action:
+        action: none
+      double_tap_action:
+        action: none
+    - type: entities
+      show_header_toggle: false
+      entities:
+      - entity: binary_sensor.jomoo_zs800i_occupancy_source_derived
+        name: 着座快照
+        icon: mdi:account
+      - entity: binary_sensor.jomoo_zs800i_lid_open_source_derived
+        name: 盖板快照
+        icon: mdi:toilet
+      - entity: binary_sensor.jomoo_zs800i_seat_ring_open_source_derived
+        name: 座圈快照
+        icon: mdi:seat-outline
+      grid_options:
+        columns: 12
+        rows: auto
+    - type: markdown
+      content: 盖圈动作存在联动；开启「关盖冲厕」后，关盖可能同时冲水。
+      grid_options:
+        columns: 12
+        rows: auto
+  - type: grid
+    cards:
+    - type: heading
+      heading: 自动功能
+      icon: mdi:tune
+      heading_style: title
+    - type: tile
+      entity: switch.jiu_mu_zhi_neng_ma_tong_zs800i_atmosphere_light_control
+      name: 氛围灯
+      icon: mdi:lightbulb-on-outline
+      color: amber
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 2
+      features:
+      - type: toggle
+    - type: tile
+      entity: switch.jiu_mu_zhi_neng_ma_tong_zs800i_foot_sensor
       name: 脚感控制
-    - entity: switch.jiu_mu_zhi_neng_ma_tong_zs800i_pre_wetting
+      icon: mdi:foot-print
+      color: teal
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 2
+      features:
+      - type: toggle
+    - type: tile
+      entity: switch.jiu_mu_zhi_neng_ma_tong_zs800i_pre_wetting
       name: 预湿润
-    - entity: switch.jiu_mu_zhi_neng_ma_tong_zs800i_automatic_bubble
+      icon: mdi:water-plus
+      color: blue
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 2
+      features:
+      - type: toggle
+    - type: tile
+      entity: switch.jiu_mu_zhi_neng_ma_tong_zs800i_automatic_bubble
       name: 自动发泡
-    - entity: switch.jiu_mu_zhi_neng_ma_tong_zs800i_water_uv_sterilization
-      name: 水路UV杀菌
-    - entity: switch.jiu_mu_zhi_neng_ma_tong_zs800i_close_cover_flushing
+      icon: mdi:chart-bubble
+      color: cyan
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 2
+      features:
+      - type: toggle
+    - type: tile
+      entity: switch.jiu_mu_zhi_neng_ma_tong_zs800i_water_uv_sterilization
+      name: UV 杀菌
+      icon: mdi:shield-check-outline
+      color: purple
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 2
+      features:
+      - type: toggle
+    - type: tile
+      entity: switch.jiu_mu_zhi_neng_ma_tong_zs800i_close_cover_flushing
       name: 关盖冲厕
-    - entity: switch.jiu_mu_zhi_neng_ma_tong_zs800i_automatic_small_flush
+      icon: mdi:water-sync
+      color: blue
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 2
+      features:
+      - type: toggle
+    - type: tile
+      entity: switch.jiu_mu_zhi_neng_ma_tong_zs800i_automatic_small_flush
       name: 自动小冲
+      icon: mdi:water-outline
+      color: blue
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 2
+      features:
+      - type: toggle
+- title: 状态与说明
+  path: details
+  icon: mdi:information-outline
+  cards:
   - type: entities
-    title: 盖圈与着座快照
+    title: 设备回读记录
     show_header_toggle: false
     entities:
-    - entity: binary_sensor.jomoo_zs800i_occupancy_source_derived
-      name: 着座
-    - entity: binary_sensor.jomoo_zs800i_lid_open_source_derived
-      name: 盖打开
-    - entity: binary_sensor.jomoo_zs800i_seat_ring_open_source_derived
-      name: 圈打开
+    - entity: sensor.jomoo_zs800i_last_query_result
+      name: 最近查询
+      icon: mdi:database-check-outline
+    - entity: sensor.jiu_mu_zhi_neng_ma_tong_zs800i_last_control_result
+      name: 最近控制
+      icon: mdi:check-circle-outline
+    - entity: sensor.jomoo_zs800i_last_status_time
+      name: 状态快照时间
+      icon: mdi:clock-outline
+  - type: markdown
+    content: '### 使用说明
+
+      - 主页分为日常使用、舒适温度、盖板与座圈、自动功能；手机会自动单列排列。
+
+      - 档位滑块按整数吸附，松手发送一次；0 为关闭对应加热。显示数值来自设备回读。
+
+      - 点击动作卡片或图标均发送同一个命令，长按和双击不额外触发动作。
+
+      - 打开盖板会保留座圈状态；其他盖圈组合可能联动。
+
+      - 默认持续保持蓝牙连接；厂商小程序需要直连时先点击「释放蓝牙连接」，下次 HA 操作才会重新连接。
+
+      - 命令写出即返回，回读在后台观察，不挡住下一条；仍保留固件短发送间隔和动作前检查。
+
+      - 灯与风温 0/1/2 档已有实机回读验证；其他控制基于 237371 协议，仍需逐项实物核对。
+
+      - 状态是最近回读快照，并非持续实时监测。「回读不匹配」代表回读未确认目标值，不应当作成功。
+
+      '
