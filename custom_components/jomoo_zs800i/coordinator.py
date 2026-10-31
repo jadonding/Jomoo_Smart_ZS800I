@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 from time import monotonic
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
@@ -49,6 +49,11 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._publish_handle = None
         self._operation_start = 0.0
         self._warmup_task = None
+        self._confirmation = None
+        self._confirmation_task = None
+        self._confirmation_draining = set()
+        self._control_waiters = 0
+        self._closing = False
         self._store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}")
         self.data = {"bluetooth_connected": False, "last_result": "never_queried", "last_control_result": "never_sent", "frames": {},
                      "frame_times": {}, "fields": {}, "field_times": {}}
@@ -67,7 +72,7 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self.data[key] = cached[key]
             if isinstance(cached.get("control_write_completed"), bool):
                 self.data["control_write_completed"] = cached["control_write_completed"]
-            for key in ("last_control_write_ms", "last_control_write_complete_ms", "last_control_total_ms"):
+            for key in ("last_control_write_ms", "last_control_write_complete_ms", "last_control_total_ms", "last_control_confirmation_ms"):
                 if type(cached.get(key)) in (int, float) and cached[key] >= 0:
                     self.data[key] = cached[key]
             if isinstance(cached.get("last_connection_reused"), bool):
@@ -80,6 +85,9 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_query(self) -> None:
         """Send only the fixed query; preserve old state on all failures."""
+        if self._closing:
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="query_in_progress")
+        await self._cancel_confirmation()
         if self._lock.locked():
             raise HomeAssistantError(translation_domain=DOMAIN, translation_key="query_in_progress")
         async with self._lock:
@@ -108,16 +116,15 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """One serialized command, with fresh baseline and non-optimistic readback."""
         if name not in ACTIONS and name not in LEVELS and name not in SHORT_SWITCHES:
             raise HomeAssistantError(translation_domain=DOMAIN, translation_key="control_unsupported")
-        if self._lock.locked():
-            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="query_in_progress")
-        async with self._lock:
+        requested = monotonic()
+        async with self._control_slot():
             self.data.update(last_control_result="sending", last_control_name=name,
                              last_control_time=dt_util.utcnow().isoformat(), last_result="querying",
                              last_query_time=dt_util.utcnow().isoformat(),
                              last_control_frame=None, control_write_completed=False,
-                             control_write_attempted=False, last_control_write_ms=None,
+                             control_write_attempted=False, last_control_confirmation_ms=None, last_control_write_ms=None,
                              last_control_write_complete_ms=None, last_control_total_ms=None)
-            self._operation_start = monotonic()
+            self._operation_start = requested
             self.async_set_updated_data(self.data)
             try:
                 await self._async_query_device(control=(name, value))
@@ -143,7 +150,10 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             finally:
                 self.data["last_control_total_ms"] = round((monotonic() - self._operation_start) * 1000)
                 self.async_set_updated_data(self.data)
-                await self._store.async_save(self.data)
+                if getattr(self._store, "async_delay_save", None):
+                    self._save_later()
+                else:
+                    await self._store.async_save(self.data)
                 _LOGGER.debug("Control %s finished: %s; tx=%sms write_done=%sms total=%sms reused=%s",
                               name, self.data["last_control_result"], self.data.get("last_control_write_ms"),
                               self.data.get("last_control_write_complete_ms"), self.data["last_control_total_ms"],
@@ -199,6 +209,8 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise HomeAssistantError(translation_domain=DOMAIN, translation_key="control_requires_unoccupied")
         if name in {"wash_hip", "wash_woman", "wash_auto_hip", "wash_auto_woman", "dry"} and not fields["occupancy"]:
             raise HomeAssistantError(translation_domain=DOMAIN, translation_key="control_requires_occupied")
+        if self._closing:
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="query_in_progress")
         packet = build_control(name, value, frames.get("FA"), fields)
         expected = expected_after(name, value, fields)
         if name == "stop":
@@ -229,22 +241,129 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.data["last_control_write_complete_ms"] = round((monotonic() - self._operation_start) * 1000)
         self.data["last_control_result"] = "sent_unconfirmed"
         self.async_set_updated_data(self.data)
-        confirmed = lambda: bool(expected) and all(fields.get(k) == v for k, v in expected.items())
-        if not confirmed():
-            await asyncio.sleep(POST_COMMAND_PAUSE)
-        readback_interval = min(CONTROL_READBACK_TIMEOUT, 1.0)
-        attempts = math.ceil(CONTROL_READBACK_TIMEOUT * 3 / readback_interval)
-        for _ in range(attempts):
-            if confirmed():
-                break
-            await session.write(QUERY, response=response)  # reads may retry, actions never do
+        self._start_confirmation(session, expected, frames, fields, event, response,
+                                 self._operation_start)
+
+    @asynccontextmanager
+    async def _control_slot(self):
+        # Bound explicit user requests rather than dropping a second click just
+        # because the preceding write is still completing. Never queue minutes.
+        if self._closing or self._control_waiters >= 4:
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="query_in_progress")
+        self._control_waiters += 1
+        acquired = False
+        try:
+            await self._cancel_confirmation()
             try:
-                await self._wait_observation(confirmed, event, readback_interval)
-            except TimeoutError:
-                pass
-        self.data["last_result"] = "valid_status_received" if frames else "no_valid_status"
-        self.data["last_control_result"] = ("confirmed" if confirmed() else
-            "readback_mismatch" if expected and all(k in fields for k in expected) else "sent_unconfirmed")
+                async with asyncio.timeout(10):
+                    await self._lock.acquire()
+            except TimeoutError as err:
+                raise HomeAssistantError(translation_domain=DOMAIN, translation_key="query_in_progress") from err
+            acquired = True
+            # A preceding foreground request may have created its confirmation
+            # while this request was queued. Cancel that observer too.
+            await self._cancel_confirmation()
+            if self._closing:
+                raise HomeAssistantError(translation_domain=DOMAIN, translation_key="query_in_progress")
+            yield
+        finally:
+            if acquired:
+                self._lock.release()
+            self._control_waiters -= 1
+
+    async def _cancel_confirmation(self):
+        record, task = self._confirmation, self._confirmation_task
+        self._confirmation = None
+        self._confirmation_task = None
+        if record is not None:
+            record["unsubscribe"]()
+        if task is not None and not task.done():
+            if record is None or not record.get("writing"):
+                task.cancel()
+            # Retain and shield the owning task, not a detached write. Even if
+            # this caller is cancelled, its bounded QUERY still owns the lock.
+            self._confirmation_draining.add(task)
+            task.add_done_callback(self._confirmation_draining.discard)
+        draining = tuple(self._confirmation_draining)
+        if draining:
+            await asyncio.shield(asyncio.gather(*draining, return_exceptions=True))
+
+    def _start_confirmation(self, session, expected, frames, fields, event, response, started):
+        # Local dictionaries contain only post-write observations. They never
+        # borrow stored/global snapshots, even when the transport is reused.
+        if self._closing:
+            return
+        def observe(frame):
+            frames[f"{frame[5]:02X}"] = frame
+            fields.update(decode_source_fields(frame))
+            event.set()
+        record = {"session": session, "expected": dict(expected), "frames": frames,
+                  "fields": fields, "event": event, "response": response,
+                  "started": started, "unsubscribe": session.add_observer(observe)}
+        self._confirmation = record
+        create = getattr(self.hass, "async_create_background_task", None)
+        self._confirmation_task = (create(self._confirm_in_background(record), "JOMOO background observation")
+            if create else self.hass.async_create_task(self._confirm_in_background(record)))
+
+    async def _confirm_in_background(self, record):
+        session = record["session"]
+        expected, fields, frames = record["expected"], record["fields"], record["frames"]
+        matched = lambda: bool(expected) and all(fields.get(k) == v for k, v in expected.items())
+        deadline = monotonic() + CONTROL_READBACK_TIMEOUT * 3
+        try:
+            if not matched():
+                await asyncio.sleep(POST_COMMAND_PAUSE)
+            while self._confirmation is record and not matched() and monotonic() < deadline:
+                if self._session is not session or not session.live:
+                    break
+                if self._control_waiters or self._lock.locked():
+                    await asyncio.sleep(min(0.05, max(0, deadline - monotonic())))
+                    continue
+                # Hold the transport lock for a query WRITE only, never while
+                # waiting for a reply. Foreground requests cancel this task.
+                async with self._lock:
+                    if self._confirmation is not record or self._control_waiters:
+                        continue
+                    record["writing"] = True
+                    try:
+                        async with asyncio.timeout(1):
+                            await session.write(QUERY, response=record["response"])
+                    finally:
+                        record["writing"] = False
+                if self._confirmation is not record:
+                    return
+                try:
+                    await self._wait_observation(matched, record["event"],
+                        min(CONTROL_READBACK_TIMEOUT, 1.0, max(0.001, deadline-monotonic())))
+                except TimeoutError:
+                    pass
+            if self._confirmation is record:
+                self.data["last_control_result"] = ("confirmed" if matched() else
+                    "readback_mismatch" if expected and all(k in fields for k in expected) else "sent_unconfirmed")
+                self.data["last_result"] = "valid_status_received" if frames else "no_valid_status"
+                self.data["last_control_confirmation_ms"] = round((monotonic()-record["started"])*1000)
+                self.async_set_updated_data(self.data)
+                self._save_later()
+                _LOGGER.debug("Background control observation: %s in %sms",
+                              self.data["last_control_result"], self.data["last_control_confirmation_ms"])
+        except asyncio.CancelledError:
+            raise  # a newer request superseded observation, not the BLE session
+        except Exception as err:
+            if self._confirmation is record:
+                self.data["last_control_result"] = "sent_unconfirmed"
+                self.async_set_updated_data(self.data)
+                self._save_later()
+                _LOGGER.debug("Background readback ended without command replay: %s", err)
+        finally:
+            record["unsubscribe"]()
+            if self._confirmation is record:
+                self._confirmation = None
+                self._confirmation_task = None
+
+    def _save_later(self):
+        save = getattr(self._store, "async_delay_save", None)
+        if save:
+            save(lambda: self.data, 0.5)
 
     def _cancel_idle(self):
         self._idle_generation += 1
@@ -296,6 +415,7 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._retired_client = None
 
     async def _close_session(self):
+        await self._cancel_confirmation()
         self._cancel_idle()
         session, self._session = self._session, None
         if session is not None:
@@ -324,7 +444,7 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return {"persistent": -1, "idle": 60, "disconnect": 0}.get(mode, SESSION_IDLE_TIMEOUT)
 
     def async_start_warmup(self):
-        if self.connection_timeout() >= 0:
+        if self._closing or self.connection_timeout() >= 0:
             return
         create = getattr(self.hass, "async_create_background_task", None)
         if self._warmup_task is not None and not self._warmup_task.done():
@@ -343,7 +463,12 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("BLE warmup deferred: %s", err)
 
     async def async_apply_options(self):
+        if self._closing:
+            return
+        await self._cancel_confirmation()
         async with self._lock:
+            if self._closing:
+                return
             await self._release_or_keep()
             needs_warmup = self.connection_timeout() < 0 and self._session is None
         if needs_warmup:
@@ -366,6 +491,7 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_disconnect(self):
         """Release the BLE session for the manufacturer's app; never send an action."""
+        await self._cancel_confirmation()
         if self._lock.locked():
             raise HomeAssistantError(translation_domain=DOMAIN, translation_key="query_in_progress")
         async with self._lock:
@@ -401,6 +527,8 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await asyncio.gather(sweep, return_exceptions=True)
 
     async def _get_session(self, observer):
+        if self._closing:
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="query_in_progress")
         self._cancel_idle()
         await self._drain_retired()
         if self._session is not None and self._session.live:
@@ -496,6 +624,8 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_shutdown(self) -> None:
         """Release timers and subscription without replaying any command."""
+        self._closing = True
+        await self._cancel_confirmation()
         if self._warmup_task is not None and not self._warmup_task.done():
             self._warmup_task.cancel()
             await asyncio.gather(self._warmup_task, return_exceptions=True)

@@ -35,7 +35,7 @@ views:
 
 
       最近命令发出：{{ state_attr(''sensor.jiu_mu_zhi_neng_ma_tong_zs800i_last_control_result'',
-      ''last_control_write_ms'') }} ms；判定结果：{{ state_attr(''sensor.jiu_mu_zhi_neng_ma_tong_zs800i_last_control_result'',
+      ''last_control_write_ms'') }} ms；前台返回：{{ state_attr(''sensor.jiu_mu_zhi_neng_ma_tong_zs800i_last_control_result'',
       ''last_control_total_ms'') }} ms。'
   - type: entities
     title: 查询与控制结果

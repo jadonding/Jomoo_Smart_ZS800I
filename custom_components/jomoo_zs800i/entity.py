@@ -38,4 +38,5 @@ class JomooEntity(CoordinatorEntity):
                 "last_connection_reused": self.coordinator.data.get("last_connection_reused"),
                 "last_control_write_ms": self.coordinator.data.get("last_control_write_ms"),
                 "last_control_write_complete_ms": self.coordinator.data.get("last_control_write_complete_ms"),
-                "last_control_total_ms": self.coordinator.data.get("last_control_total_ms")}
+                "last_control_total_ms": self.coordinator.data.get("last_control_total_ms"),
+                "last_control_confirmation_ms": self.coordinator.data.get("last_control_confirmation_ms")}

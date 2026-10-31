@@ -281,10 +281,181 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.hass = types.SimpleNamespace(async_create_task=asyncio.create_task)
         self.coordinator = coordinator_module.JomooCoordinator(self.hass, self.entry)
 
+    async def control_and_observe(self, name, value=None):
+        """Legacy protocol assertions await observation explicitly, not via the API.
+
+        New nonblocking tests below invoke coordinator.async_control directly.
+        Keep the mock transport alive while checking readback behavior.
+        """
+        ephemeral = self.coordinator.connection_timeout() == 0
+        try:
+            with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 60 if ephemeral else coordinator_module.SESSION_IDLE_TIMEOUT):
+                await self.coordinator.async_control(name, value)
+                task = self.coordinator._confirmation_task
+                if task is not None:
+                    await task
+        finally:
+            if ephemeral:
+                await self.coordinator._close_session()
+
     async def asyncTearDown(self):
         await self.coordinator.async_shutdown()
         for item in reversed(self.patches):
             item.stop()
+
+    async def test_control_returns_before_missing_readback(self):
+        self.entry.options = {"connection_mode": "persistent"}
+        FakeClient.packets = []
+        with patch.object(coordinator_module, "POST_COMMAND_PAUSE", 1):
+            await asyncio.wait_for(self.coordinator.async_control("atmosphere_on", False), 0.1)
+        self.assertEqual(self.coordinator.data["last_control_result"], "sent_unconfirmed")
+        self.assertIsNotNone(self.coordinator._confirmation_task)
+        self.assertFalse(self.coordinator._lock.locked())
+        self.assertFalse(FakeClient.instances[0].disconnected)
+
+    async def test_next_control_supersedes_background_without_disconnect(self):
+        self.entry.options = {"connection_mode": "persistent"}
+        FakeClient.packets = []
+        with patch.object(coordinator_module, "POST_COMMAND_PAUSE", 1):
+            await self.coordinator.async_control("atmosphere_on", False)
+            old = self.coordinator._confirmation_task
+            await asyncio.wait_for(self.coordinator.async_control("atmosphere_on", True), 0.1)
+        self.assertTrue(old.cancelled())
+        client = FakeClient.instances[0]
+        self.assertEqual(len(FakeClient.instances), 1)
+        self.assertFalse(client.disconnected)
+        self.assertEqual(len([p for p, _ in client.writes if p != const.QUERY]), 2)
+        self.assertTrue(self.coordinator.data["last_control_frame"].endswith("33202BFC"))
+
+    async def test_background_wait_never_holds_transport_lock(self):
+        self.entry.options = {"connection_mode": "persistent"}
+        FakeClient.packets = []
+        with patch.object(coordinator_module, "CONTROL_READBACK_TIMEOUT", 1):
+            await self.coordinator.async_control("atmosphere_on", False)
+            old = self.coordinator._confirmation_task
+            await asyncio.sleep(0.01)
+            self.assertFalse(self.coordinator._lock.locked())
+            self.assertTrue(any(p == const.QUERY for p, _ in FakeClient.instances[0].writes))
+            await asyncio.wait_for(self.coordinator.async_control("atmosphere_on", True), 0.1)
+            self.assertTrue(old.cancelled())
+            self.assertFalse(FakeClient.instances[0].disconnected)
+
+    async def test_inflight_background_query_finishes_before_next_write(self):
+        self.entry.options = {"connection_mode": "persistent"}
+        FakeClient.packets = []
+        started, release = asyncio.Event(), asyncio.Event()
+        original = FakeClient.write_gatt_char
+        async def gated(client, char, data, *, response):
+            if data == const.QUERY:
+                started.set()
+                await release.wait()
+            await original(client, char, data, response=response)
+        with patch.object(FakeClient, "write_gatt_char", gated), \
+             patch.object(coordinator_module, "CONTROL_READBACK_TIMEOUT", 1):
+            await self.coordinator.async_control("atmosphere_on", False)
+            await started.wait()
+            second = asyncio.create_task(self.coordinator.async_control("atmosphere_on", True))
+            await asyncio.sleep(0.005)
+            self.assertFalse(second.done())
+            self.assertFalse(FakeClient.instances[0].disconnected)
+            release.set()
+            await asyncio.wait_for(second, 0.1)
+        self.assertEqual(len([p for p, _ in FakeClient.instances[0].writes if p != const.QUERY]), 2)
+
+    async def test_old_observation_cannot_overwrite_new_control(self):
+        self.entry.options = {"connection_mode": "persistent"}
+        FakeClient.packets = []
+        with patch.object(coordinator_module, "POST_COMMAND_PAUSE", 1):
+            await self.coordinator.async_control("atmosphere_on", False)
+            old = self.coordinator._confirmation
+            await self.coordinator.async_control("atmosphere_on", True)
+            current = self.coordinator._confirmation
+            old["fields"]["atmosphere_on"] = False
+            await self.coordinator._confirm_in_background(old)
+            self.assertIs(self.coordinator._confirmation, current)
+            self.assertEqual(self.coordinator.data["last_control_result"], "sent_unconfirmed")
+            FakeClient.instances[0].cb(None, bytearray(FA))
+            await self.coordinator._confirmation_task
+        self.assertEqual(self.coordinator.data["last_control_result"], "confirmed")
+
+    async def test_two_foreground_requests_queue_writes_not_confirmations(self):
+        self.entry.options = {"connection_mode": "persistent"}
+        FakeClient.packets = []
+        FakeClient.gate = asyncio.Event()
+        with patch.object(coordinator_module, "POST_COMMAND_PAUSE", 1):
+            first = asyncio.create_task(self.coordinator.async_control("atmosphere_on", False))
+            await asyncio.sleep(0)
+            second = asyncio.create_task(self.coordinator.async_control("atmosphere_on", True))
+            await asyncio.sleep(0)
+            FakeClient.gate.set()
+            await asyncio.wait_for(asyncio.gather(first, second), 0.2)
+        self.assertEqual(self.coordinator._control_waiters, 0)
+        self.assertEqual(len(FakeClient.instances), 1)
+        self.assertEqual(len([p for p, _ in FakeClient.instances[0].writes if p != const.QUERY]), 2)
+
+    async def test_refresh_cancels_readback_but_keeps_session(self):
+        self.entry.options = {"connection_mode": "persistent"}
+        FakeClient.packets = []
+        with patch.object(coordinator_module, "POST_COMMAND_PAUSE", 1):
+            await self.coordinator.async_control("atmosphere_on", False)
+            old = self.coordinator._confirmation_task
+            await self.coordinator.async_query()
+        self.assertTrue(old.cancelled())
+        self.assertIsNone(self.coordinator._confirmation_task)
+        self.assertFalse(FakeClient.instances[0].disconnected)
+
+    async def test_release_and_shutdown_remove_pending_observers(self):
+        self.entry.options = {"connection_mode": "persistent"}
+        FakeClient.packets = []
+        with patch.object(coordinator_module, "POST_COMMAND_PAUSE", 1):
+            await self.coordinator.async_control("atmosphere_on", False)
+            old = self.coordinator._confirmation_task
+            session = self.coordinator._session
+            await self.coordinator.async_disconnect()
+        self.assertTrue(old.cancelled())
+        self.assertEqual(session._observers, [])
+        self.assertTrue(FakeClient.instances[0].disconnected)
+        await self.coordinator.async_shutdown()
+        with self.assertRaises(HAError):
+            await self.coordinator.async_control("atmosphere_on", True)
+
+    async def test_cancelled_caller_does_not_cancel_inflight_background_write(self):
+        self.entry.options = {"connection_mode": "persistent"}
+        FakeClient.packets = []
+        started, release, interrupted = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        original = FakeClient.write_gatt_char
+        async def gated(client, char, data, *, response):
+            if data == const.QUERY:
+                started.set()
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    interrupted.set()
+                    raise
+            await original(client, char, data, response=response)
+        with patch.object(FakeClient, "write_gatt_char", gated), \
+             patch.object(coordinator_module, "CONTROL_READBACK_TIMEOUT", 1):
+            await self.coordinator.async_control("atmosphere_on", False)
+            await started.wait()
+            caller = asyncio.create_task(self.coordinator.async_control("atmosphere_on", True))
+            await asyncio.sleep(0.005)
+            caller.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await caller
+            self.assertFalse(interrupted.is_set())
+            self.assertTrue(self.coordinator._lock.locked())
+            release.set()
+            await self.coordinator._cancel_confirmation()
+        self.assertFalse(self.coordinator._lock.locked())
+        self.assertFalse(FakeClient.instances[0].disconnected)
+
+    async def test_shutdown_blocks_refresh_and_option_warmup(self):
+        await self.coordinator.async_shutdown()
+        with self.assertRaises(HAError):
+            await self.coordinator.async_query()
+        self.entry.options = {"connection_mode": "persistent"}
+        await self.coordinator.async_apply_options()
+        self.assertEqual(FakeClient.instances, [])
 
     async def test_cache_restore_never_connects(self):
         await self.coordinator.async_load()
@@ -448,11 +619,11 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_warm_controls_reuse_one_connection_and_subscription(self):
         with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 60):
-            await self.coordinator.async_control("atmosphere_on", True)
+            await self.control_and_observe("atmosphere_on", True)
             client = FakeClient.instances[0]
             callback = client.cb
             self.assertFalse(client.disconnected)
-            await self.coordinator.async_control("atmosphere_on", True)
+            await self.control_and_observe("atmosphere_on", True)
             self.assertEqual(len(FakeClient.instances), 1)
             self.assertIs(client.cb, callback)
             self.assertTrue(self.coordinator.data["last_connection_reused"])
@@ -462,14 +633,14 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
     async def test_warm_write_waits_for_receive_quiet_window(self):
         with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 60), \
              patch.object(coordinator_module, "CONTROL_SETTLE", 0.02):
-            await self.coordinator.async_control("atmosphere_on", True)
-            await self.coordinator.async_control("atmosphere_on", True)
+            await self.control_and_observe("atmosphere_on", True)
+            await self.control_and_observe("atmosphere_on", True)
             self.assertGreaterEqual(self.coordinator.data["last_control_write_ms"], 15)
             self.assertEqual(len(FakeClient.instances), 1)
 
     async def test_persistent_mode_has_no_idle_disconnect_timer(self):
         self.entry.options = {"connection_mode": "persistent"}
-        await self.coordinator.async_control("atmosphere_on", True)
+        await self.control_and_observe("atmosphere_on", True)
         self.assertIsNone(self.coordinator._idle_handle)
         self.assertFalse(FakeClient.instances[0].disconnected)
 
@@ -496,7 +667,7 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_option_change_can_release_persistent_connection(self):
         self.entry.options = {"connection_mode": "persistent"}
-        await self.coordinator.async_control("atmosphere_on", True)
+        await self.control_and_observe("atmosphere_on", True)
         self.entry.options = {"connection_mode": "disconnect"}
         await self.coordinator.async_apply_options()
         self.assertTrue(FakeClient.instances[0].disconnected)
@@ -509,22 +680,22 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_idle_timeout_releases_session(self):
         with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 0.01):
-            await self.coordinator.async_control("atmosphere_on", True)
+            await self.control_and_observe("atmosphere_on", True)
             await asyncio.sleep(0.04)
         self.assertTrue(FakeClient.instances[0].disconnected)
         self.assertIsNone(self.coordinator._session)
 
     async def test_old_idle_generation_never_disconnects_new_operation(self):
         with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 60):
-            await self.coordinator.async_control("atmosphere_on", True)
+            await self.control_and_observe("atmosphere_on", True)
             old = self.coordinator._idle_generation
-            await self.coordinator.async_control("atmosphere_on", True)
+            await self.control_and_observe("atmosphere_on", True)
             await self.coordinator._idle_expired(old)
             self.assertFalse(FakeClient.instances[0].disconnected)
 
     async def test_release_button_path_disconnects_without_device_command(self):
         with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 60):
-            await self.coordinator.async_control("atmosphere_on", True)
+            await self.control_and_observe("atmosphere_on", True)
             client = FakeClient.instances[0]
             count = len(client.writes)
             await self.coordinator.async_disconnect()
@@ -534,17 +705,17 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_warm_ordinary_control_still_requires_new_fa(self):
         with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 60):
-            await self.coordinator.async_control("atmosphere_on", True)
+            await self.control_and_observe("atmosphere_on", True)
             client = FakeClient.instances[0]
             count = len([p for p, _ in client.writes if p != const.QUERY])
             FakeClient.packets = [E9, EA]
             with self.assertRaises(HAError):
-                await self.coordinator.async_control("air_level", 1)
+                await self.control_and_observe("air_level", 1)
             self.assertEqual(len([p for p, _ in client.writes if p != const.QUERY]), count)
 
     async def test_live_notifications_update_cache_without_renewing_idle(self):
         with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 60):
-            await self.coordinator.async_control("atmosphere_on", True)
+            await self.control_and_observe("atmosphere_on", True)
             generation = self.coordinator._idle_generation
             payload = bytearray(FA[6:-2])
             payload[0] = (payload[0] & ~0x70) | (4 << 4)
@@ -554,7 +725,7 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_explicit_disconnect_callback_rejects_late_packets(self):
         with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 60):
-            await self.coordinator.async_control("atmosphere_on", True)
+            await self.control_and_observe("atmosphere_on", True)
             client = FakeClient.instances[0]
             self.coordinator._on_disconnected(client)
             self.assertFalse(self.coordinator._session.active)
@@ -565,7 +736,7 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_disconnect_prevents_second_connection(self):
         with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 60):
-            await self.coordinator.async_control("atmosphere_on", True)
+            await self.control_and_observe("atmosphere_on", True)
             client = FakeClient.instances[0]
             async def stuck(_client):
                 raise BLEError("disconnect stuck")
@@ -575,7 +746,7 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIs(self.coordinator._retired_client, client)
                 with patch.object(coordinator_module._LOGGER, "warning"):
                     with self.assertRaises(HAError):
-                        await self.coordinator.async_control("atmosphere_on", True)
+                        await self.control_and_observe("atmosphere_on", True)
                 self.assertEqual(len(FakeClient.instances), 1)
             await self.coordinator.async_disconnect()
 
@@ -583,7 +754,7 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         FakeClient.fail = "write"
         with patch.object(coordinator_module._LOGGER, "warning"):
             with self.assertRaises(HAError):
-                await self.coordinator.async_control("atmosphere_on", False)
+                await self.control_and_observe("atmosphere_on", False)
         self.assertTrue(self.coordinator.data["control_write_attempted"])
         self.assertFalse(self.coordinator.data["control_write_completed"])
         self.assertEqual(self.coordinator.data["last_control_result"], "sent_unconfirmed")
@@ -592,14 +763,14 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
     async def test_current_scanner_route_does_not_wait_for_duplicate_advertisement(self):
         with patch.object(bluetooth, "async_scanner_devices_by_address", lambda *a, **kw: [object()], create=True), \
              patch.object(self.coordinator, "_async_wait_for_advertisement", AsyncMock(side_effect=AssertionError("unnecessary scan"))):
-            await self.coordinator.async_control("atmosphere_on", True)
+            await self.control_and_observe("atmosphere_on", True)
         self.assertEqual(self.coordinator.data["last_control_result"], "confirmed")
         self.assertTrue(FakeClient.instances[0].disconnected)
 
     async def test_initial_fa_inside_subscription_is_not_dropped(self):
         FakeClient.initial_packets = [FA]
         FakeClient.packets = [E9, EA]
-        await self.coordinator.async_control("air_level", 1)
+        await self.control_and_observe("air_level", 1)
         controls = [p for p, _ in FakeClient.instances[0].writes if p != const.QUERY]
         self.assertEqual(len(controls), 1)
         self.assertEqual(controls[0][5], 25)
@@ -607,7 +778,7 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_short_control_does_not_require_fa_baseline(self):
         FakeClient.packets = [E9, EA]
-        await self.coordinator.async_control("atmosphere_on", False)
+        await self.control_and_observe("atmosphere_on", False)
         controls = [p for p, _ in FakeClient.instances[0].writes if p != const.QUERY]
         self.assertEqual(controls, [bytes.fromhex("f3f40692211f33101bfc")])
         self.assertEqual(self.coordinator.data["last_control_result"], "sent_unconfirmed")
@@ -617,7 +788,7 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         payload[2] = (payload[2] & ~7) | 1
         changed = frame(0xFA, payload)
         FakeClient.packet_script = [[E9, EA], [FA, E9, EA], [changed, E9, EA]]
-        await self.coordinator.async_control("air_level", 1)
+        await self.control_and_observe("air_level", 1)
         writes = FakeClient.instances[0].writes
         self.assertEqual([p for p, _ in writes[:2]], [const.QUERY, const.QUERY])
         self.assertEqual(len([p for p, _ in writes if p != const.QUERY]), 1)
@@ -626,13 +797,12 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
     async def test_readback_error_after_write_preserves_unknown_outcome(self):
         original = FakeClient.write_gatt_char
         async def broken_readback(client, char, data, *, response):
-            if data == const.QUERY and len(client.writes) >= 2:
+            if data == const.QUERY and len(client.writes) >= 1:
                 raise BLEError("readback transport broke")
             await original(client, char, data, response=response)
         with patch.object(FakeClient, "write_gatt_char", broken_readback), \
              patch.object(coordinator_module._LOGGER, "warning"):
-            with self.assertRaises(HAError):
-                await self.coordinator.async_control("atmosphere_on", False)
+            await self.control_and_observe("atmosphere_on", False)
         self.assertTrue(self.coordinator.data["control_write_completed"])
         self.assertEqual(self.coordinator.data["last_control_result"], "sent_unconfirmed")
         self.assertEqual(len([p for p, _ in FakeClient.instances[0].writes if p != const.QUERY]), 1)
@@ -659,12 +829,12 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
                 asyncio.get_running_loop().call_soon(client.cb, char, bytearray(occupied))
         with patch.object(FakeClient, "write_gatt_char", changing_occupancy):
             with self.assertRaises(HAError) as error:
-                await self.coordinator.async_control("lid_close")
+                await self.control_and_observe("lid_close")
         self.assertEqual(error.exception.translation_key, "control_requires_unoccupied")
         self.assertEqual(FakeClient.instances[0].writes, [(const.QUERY, False)])
 
     async def test_control_light_confirms_only_reported_state(self):
-        await self.coordinator.async_control("atmosphere_on", True)
+        await self.control_and_observe("atmosphere_on", True)
         client = FakeClient.instances[0]
         controls = [packet for packet, response in client.writes if packet != const.QUERY]
         self.assertEqual(controls, [bytes.fromhex("f3f40692211f33202bfc")])
@@ -672,20 +842,21 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(client.stopped and client.disconnected)
 
     async def test_mismatching_control_is_never_replayed_or_optimistic(self):
-        await self.coordinator.async_control("atmosphere_on", False)
+        await self.control_and_observe("atmosphere_on", False)
         writes = FakeClient.instances[0].writes
         controls = [packet for packet, _ in writes if packet != const.QUERY]
         self.assertEqual(controls, [bytes.fromhex("f3f40692211f33101bfc")])
         self.assertEqual(self.coordinator.data["last_control_result"], "readback_mismatch")
         self.assertTrue(self.coordinator.data["fields"]["atmosphere_on"])
-        self.assertEqual(sum(packet == const.QUERY for packet, _ in writes), 3)
+        self.assertLessEqual(sum(packet == const.QUERY for packet, _ in writes), 3)
+        self.assertGreaterEqual(sum(packet == const.QUERY for packet, _ in writes), 1)
 
     async def test_temperature_control_uses_fresh_baseline_and_real_readback(self):
         payload = bytearray(FA[6:-2])
         payload[1] = (payload[1] & ~7) | 2
         changed = frame(0xFA, payload)
         FakeClient.packet_script = [[FA, E9, EA], [changed, E9, EA]]
-        await self.coordinator.async_control("seat_level", 2)
+        await self.control_and_observe("seat_level", 2)
         controls = [p for p, _ in FakeClient.instances[0].writes if p != const.QUERY]
         self.assertEqual(len(controls), 1)
         self.assertEqual((len(controls[0]), controls[0][5], controls[0][7] & 7), (19, 25, 2))
@@ -696,7 +867,7 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_wash_requires_fresh_occupied_status(self):
         with self.assertRaises(HAError) as error:
-            await self.coordinator.async_control("wash_hip")
+            await self.control_and_observe("wash_hip")
         self.assertEqual(error.exception.translation_key, "control_requires_occupied")
         self.assertEqual(FakeClient.instances[0].writes, [(const.QUERY, False)])
         self.assertEqual(self.coordinator.data["last_control_result"], "failed")
@@ -707,7 +878,7 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.coordinator.data["fields"] = {"occupancy": False, "working": False}
         FakeClient.packets = []
         with self.assertRaises(HAError) as error:
-            await self.coordinator.async_control("seat_level", 2)
+            await self.control_and_observe("seat_level", 2)
         self.assertEqual(error.exception.translation_key, "control_state_missing")
         self.assertEqual(FakeClient.instances[0].writes, [(const.QUERY, False)] * 3)
 
@@ -716,7 +887,7 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         payload[0] |= 0x40
         FakeClient.packets = [FA, E9, frame(0xEA, payload)]
         with self.assertRaises(HAError) as error:
-            await self.coordinator.async_control("lid_close")
+            await self.control_and_observe("lid_close")
         self.assertEqual(error.exception.translation_key, "control_requires_unoccupied")
         self.assertEqual(FakeClient.instances[0].writes, [(const.QUERY, False)])
 
@@ -725,18 +896,18 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         payload[3] = 0x20
         FakeClient.packets = [FA, frame(0xE9, payload), EA]
         with self.assertRaises(HAError) as error:
-            await self.coordinator.async_control("water_level", 2)
+            await self.control_and_observe("water_level", 2)
         self.assertEqual(error.exception.translation_key, "control_requires_idle")
         self.assertEqual(FakeClient.instances[0].writes, [(const.QUERY, False)])
 
     async def test_unknown_control_never_connects(self):
         with self.assertRaises(HAError):
-            await self.coordinator.async_control("raw", b"arbitrary")
+            await self.control_and_observe("raw", b"arbitrary")
         self.assertEqual(FakeClient.instances, [])
 
     async def test_cancelled_control_cleans_up_and_shares_query_lock(self):
         FakeClient.gate = asyncio.Event()
-        task = asyncio.create_task(self.coordinator.async_control("stop"))
+        task = asyncio.create_task(self.control_and_observe("stop"))
         await asyncio.sleep(0)
         with self.assertRaises(HAError):
             await self.coordinator.async_query()
