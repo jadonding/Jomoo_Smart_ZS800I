@@ -112,6 +112,7 @@ lid.append({'type': 'markdown',
 settings = [heading('自动功能', 'mdi:tune')]
 for key, name, icon, color in [
     ('set_atmosphere_on', '氛围灯', 'mdi:lightbulb-on-outline', 'amber'),
+    ('set_auto_temp', '四季温感', 'mdi:thermometer-auto', 'deep-orange'),
     ('set_foot_sensor', '脚感控制', 'mdi:foot-print', 'teal'),
     ('set_prewet', '预湿润', 'mdi:water-plus', 'blue'),
     ('set_auto_bubble', '自动发泡', 'mdi:chart-bubble', 'cyan'),

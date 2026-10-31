@@ -22,7 +22,7 @@ from .const import (CHAR_UUID, CONNECT_TIMEOUT, DOMAIN, MODEL, NOTIFY_TIMEOUT,
                     QUERY, SERVICE_UUID)
 from .protocol import FrameParser, decode_source_fields, status_command
 from .session import BLESession
-from .control import ACTIONS, LEVELS, SHORT_SWITCHES, build_control, expected_after
+from .control import ACTIONS, LEVELS, SHORT_SWITCHES, TOGGLES, build_control, expected_after
 
 CONTROL_SETTLE = 0.25  # quiet receive window, not a fixed sleep
 MIN_WRITE_GAP = 0.25
@@ -114,7 +114,8 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_control(self, name: str, value=None) -> None:
         """One serialized command, with fresh baseline and non-optimistic readback."""
-        if name not in ACTIONS and name not in LEVELS and name not in SHORT_SWITCHES:
+        if name not in ACTIONS and name not in LEVELS and name not in SHORT_SWITCHES \
+                and name not in TOGGLES:
             raise HomeAssistantError(translation_domain=DOMAIN, translation_key="control_unsupported")
         requested = monotonic()
         async with self._control_slot():
@@ -204,6 +205,11 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._wait_command_window(session)
         if name in LEVELS and fields["working"]:
             raise HomeAssistantError(translation_domain=DOMAIN, translation_key="control_requires_idle")
+        if name in ("water_level", "seat_level") and fields.get("auto_temp"):
+            # Verified on 237371: with seasonal-auto temperature on, the
+            # firmware accepts command 25 and applies air level but keeps
+            # FA[6]/FA[7] unchanged. Do not write a command that cannot apply.
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="control_requires_manual_temp")
         if name in {"lid_open", "lid_close", "ring_open", "ring_close"} and (
                 fields["occupancy"] or fields["working"] or fields.get("lid_moving", True) or fields.get("ring_moving", True)):
             raise HomeAssistantError(translation_domain=DOMAIN, translation_key="control_requires_unoccupied")

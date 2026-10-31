@@ -146,7 +146,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(protocol.decode_source_fields(FA),
                          {"water_level": 3, "seat_level": 3, "air_level": 2, "atmosphere_on": True,
                           "close_flush": True, "flush_small_running": False, "flush_large_running": False,
-                          "uv_water": True, "auto_bubble": True, "prewet": True,
+                          "uv_water": True, "auto_bubble": True, "prewet": True, "auto_temp": True,
                           "foot_sensor": True, "auto_small_flush": False})
         self.assertEqual(protocol.decode_source_fields(E9), {"occupancy": False, "work_code": 1,
                          "working": False, "is_woman": False, "dry_running": False,
@@ -852,10 +852,15 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(sum(packet == const.QUERY for packet, _ in writes), 1)
 
     async def test_temperature_control_uses_fresh_baseline_and_real_readback(self):
-        payload = bytearray(FA[6:-2])
+        # Manual temperature is only accepted with seasonal auto temp off
+        # (FA[11].bit3); the shipped fixture has it on, so clear that bit.
+        base = bytearray(FA[6:-2])
+        base[5] &= ~8
+        manual_fa = frame(0xFA, base)
+        payload = bytearray(base)
         payload[1] = (payload[1] & ~7) | 2
         changed = frame(0xFA, payload)
-        FakeClient.packet_script = [[FA, E9, EA], [changed, E9, EA]]
+        FakeClient.packet_script = [[manual_fa, E9, EA], [changed, E9, EA]]
         await self.control_and_observe("seat_level", 2)
         controls = [p for p, _ in FakeClient.instances[0].writes if p != const.QUERY]
         self.assertEqual(len(controls), 1)
@@ -864,6 +869,34 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.coordinator.data["fields"]["seat_level"], 2)
         self.assertEqual(self.coordinator.data["fields"]["water_level"], 3)
         self.assertEqual(self.coordinator.data["last_control_result"], "confirmed")
+
+    async def test_manual_temperature_blocked_while_seasonal_auto_is_on(self):
+        self.assertTrue(self.coordinator.data.get("fields", {}).get("auto_temp") in (None, True))
+        for name, value in (("water_level", 1), ("seat_level", 5)):
+            with self.subTest(name=name):
+                with self.assertRaises(HAError) as error:
+                    await self.coordinator.async_control(name, value)
+                self.assertEqual(error.exception.translation_key,
+                                 "control_requires_manual_temp")
+        client = FakeClient.instances[0]
+        self.assertEqual([p for p, _ in client.writes if p != const.QUERY], [])
+        self.assertEqual(self.coordinator.data["last_control_result"], "failed")
+
+    async def test_auto_temp_toggle_uses_command_two_with_readback(self):
+        base = bytearray(FA[6:-2])
+        base[5] &= ~8
+        auto_off = frame(0xFA, base)
+        payload = bytearray(base)
+        payload[5] |= 8
+        auto_on = frame(0xFA, payload)
+        FakeClient.packet_script = [[auto_off, E9, EA], [auto_on, E9, EA]]
+        await self.control_and_observe("auto_temp", True)
+        controls = [p for p, _ in FakeClient.instances[0].writes if p != const.QUERY]
+        self.assertEqual(len(controls), 1)
+        self.assertEqual((len(controls[0]), controls[0][5]), (19, 2))
+        self.assertTrue(protocol.valid_frame(controls[0]))
+        self.assertEqual(self.coordinator.data["last_control_result"], "confirmed")
+        self.assertTrue(self.coordinator.data["fields"]["auto_temp"])
 
     async def test_wash_requires_fresh_occupied_status(self):
         with self.assertRaises(HAError) as error:

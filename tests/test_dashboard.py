@@ -16,7 +16,7 @@ KEYS = {
                'wash_auto_hip','wash_auto_woman','flush_small','lid_open','lid_close',
                'ring_open','ring_close','disconnect_bluetooth'),
     'number': ('set_water_level','set_seat_level','set_air_level'),
-    'switch': ('control_atmosphere_on','control_foot_sensor','control_prewet',
+    'switch': ('control_atmosphere_on','control_auto_temp','control_foot_sensor','control_prewet',
                'control_auto_bubble','control_uv_water','control_close_flush','control_auto_small_flush'),
     'sensor': ('last_query_result','last_control_result','last_status_time'),
     'binary_sensor': ('occupancy','lid_open','ring_open'),
@@ -66,7 +66,7 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(card['hold_action'], {'action':'none'})
         features = [f['type'] for c in cards for f in c.get('features', [])]
         self.assertEqual(features.count('numeric-input'), 3)
-        self.assertEqual(features.count('toggle'), 7)
+        self.assertEqual(features.count('toggle'), 8)
 
     def test_staging_does_not_overwrite_existing_live_panel(self):
         live = self.root / 'dashboard-jomoo.yaml'

@@ -1,13 +1,14 @@
 """Protocol-derived switches displaying read-back state only."""
 from homeassistant.components.switch import SwitchEntity
 
-from .control import SHORT_SWITCHES
+from .control import SHORT_SWITCHES, TOGGLES
 from .entity import JomooEntity
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
     async_add_entities([
-        JomooControlSwitch(entry.runtime_data, field) for field in SHORT_SWITCHES
+        JomooControlSwitch(entry.runtime_data, field)
+        for field in (*SHORT_SWITCHES, *TOGGLES)
     ])
 
 
@@ -19,6 +20,8 @@ class JomooControlSwitch(JomooEntity, SwitchEntity):
         self.field = field
         if field == "atmosphere_on":
             self._attr_icon = "mdi:lightbulb"
+        elif field == "auto_temp":
+            self._attr_icon = "mdi:thermometer-auto"
 
     @property
     def is_on(self) -> bool | None:

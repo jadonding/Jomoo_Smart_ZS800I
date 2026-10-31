@@ -104,7 +104,10 @@ def decode_source_fields(frame: bytes) -> dict[str, int | bool]:
                           flush_large_running=bool(payload[4] & 8))
         if len(payload) >= 6:
             result.update(atmosphere_on=bool(payload[5] & 0x10),
-                          uv_water=bool(payload[5] & 0x20))
+                          uv_water=bool(payload[5] & 0x20),
+                          # FA[11].bit3 is the seasonal-auto temperature mode
+                          # (upstream dealWithFA); not part of the 19-byte body.
+                          auto_temp=bool(payload[5] & 8))
         if len(payload) >= 7:
             result.update(auto_bubble=bool(payload[6] & 8), prewet=bool(payload[6] & 0x20))
         if len(payload) >= 8:

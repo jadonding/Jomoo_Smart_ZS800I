@@ -37,6 +37,12 @@ SHORT_SWITCHES = {
 }
 LEVELS = {"water_level": (0, 5), "seat_level": (0, 5), "air_level": (0, 3)}
 
+# Ordinary 19-byte commands whose meaning is a firmware-side toggle/setting
+# rather than a value we can encode in the frame. 237371's auto season mode
+# (FA[11].bit3) is reported by FA but has no bit in the 19-byte template; the
+# upstream mini program toggles it with command 2 and a normal parameter body.
+TOGGLES = {"auto_temp": 2}
+
 
 def _finish(command: int, payload: list[int]) -> bytes:
     frame = bytearray((0xF3, 0xF4, len(payload) + 4, 0x92, 0x21, command, *payload))
@@ -51,7 +57,7 @@ def _level(value: object, minimum: int, maximum: int, label: str) -> int:
 
 
 def _request(name: str, value: object) -> None:
-    if name in SHORT_SWITCHES:
+    if name in SHORT_SWITCHES or name in TOGGLES:
         if type(value) is not bool:
             raise ValueError(f"{name} requires bool")
     elif name in LEVELS:
@@ -114,7 +120,7 @@ def build_control(name: str, value: object = None, fa: bytes | None = None,
         b7 = (b7 & ~7) | value
     elif name == "air_level":
         b8 = (b8 & ~7) | value
-    code = 25 if name in LEVELS else ACTIONS[name]
+    code = 25 if name in LEVELS else TOGGLES[name] if name in TOGGLES else ACTIONS[name]
     if name == "lid_open":
         code = 19 if _ring(fields) else 17
     # Width is FA[13].0..2 -> TX[9].4..6; wind FA[10] -> TX[11].
@@ -132,6 +138,10 @@ def expected_after(name: str, value: object = None, fields: dict | None = None) 
     fields = {} if fields is None else fields
     if name in SHORT_SWITCHES or name in LEVELS:
         return {name: value}
+    if name in TOGGLES:
+        # Command 2 carries no auto-temp bit; only a new FA can reveal the new
+        # FA[11].bit3 state, so require that readback rather than guessing.
+        return {"auto_temp": value}
     if name == "lid_close":
         return {"lid_open": False, "ring_open": False}
     if name == "lid_open":

@@ -179,6 +179,9 @@
       },
       "control_auto_small_flush": {
         "name": "自动小冲"
+      },
+      "control_auto_temp": {
+        "name": "四季温感"
       }
     },
     "number": {
@@ -205,6 +208,9 @@
     },
     "control_requires_idle": {
       "message": "请在马桶空闲时操作。"
+    },
+    "control_requires_manual_temp": {
+      "message": "四季温感已开启，正在接管水温和座温；请先关闭“四季温感”，再设置档位。"
     },
     "control_in_progress": {
       "message": "马桶正在操作，请稍后再试。"

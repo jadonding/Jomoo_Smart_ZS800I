@@ -398,6 +398,17 @@ views:
       features:
       - type: toggle
     - type: tile
+      entity: switch.wei_sheng_jian_jiu_mu_zhi_neng_ma_tong_zs800i_seasonal_auto_temperature
+      name: 四季温感
+      icon: mdi:thermometer-auto
+      color: deep-orange
+      vertical: false
+      grid_options:
+        columns: 6
+        rows: 2
+      features:
+      - type: toggle
+    - type: tile
       entity: switch.jiu_mu_zhi_neng_ma_tong_zs800i_foot_sensor
       name: 脚感控制
       icon: mdi:foot-print
