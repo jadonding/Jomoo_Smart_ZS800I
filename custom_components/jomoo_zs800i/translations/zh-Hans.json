@@ -11,7 +11,7 @@
       },
       "bluetooth_confirm": {
         "title": "发现九牧 ZS800I",
-        "description": "添加设备 {address}？刷新或控制时才连接。控制基于协议，尚未逐项实物验证；仅氛围灯开关已验证。"
+        "description": "添加设备 {address}？默认连接策略会在启动时只读预热并保持蓝牙连接。控制基于协议，尚未逐项实物验证；仅氛围灯开关已验证。"
       }
     },
     "error": {
@@ -22,8 +22,31 @@
       "unsupported_device": "仅支持JOMOO_SMART_237371。"
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "蓝牙连接策略",
+        "description": "持续保持模式会在启动时进行后台只读预热并保持连接，因此会占用设备蓝牙。使用厂商小程序前，请点击“释放蓝牙连接”；手动释放后不会抢占重连。所有模式均不会自动重放控制动作。",
+        "data": {
+          "connection_mode": "连接策略"
+        }
+      }
+    }
+  },
+  "selector": {
+    "connection_mode": {
+      "options": {
+        "persistent": "持续保持（推荐）",
+        "idle": "闲置60秒后断开",
+        "disconnect": "每次操作后断开"
+      }
+    }
+  },
   "entity": {
     "button": {
+      "disconnect_bluetooth": {
+        "name": "释放蓝牙连接"
+      },
       "refresh_status": {
         "name": "刷新状态"
       },

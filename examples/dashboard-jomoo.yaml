@@ -7,7 +7,7 @@ views:
   - type: markdown
     content: '## 九牧 ZS800I 控制
 
-      灯与风温1/2档已通过设备回读验证；其他功能基于237371协议，待逐项实物核对。
+      灯与风温0/1/2档已通过设备回读验证；其他功能基于237371协议，待逐项实物核对。默认持续保持蓝牙连接并启动预热；厂商小程序直连前按“释放蓝牙连接”，下次HA操作才重新连接。
 
       盖圈操作存在联动，关盖还可能触发已开启的关盖冲厕。显示值是最近回读快照；操作结束后查看控制结果。'
   - type: button
@@ -19,6 +19,24 @@ views:
       perform_action: button.press
       target:
         entity_id: button.jomoo_zs800i_refresh_status
+  - type: button
+    entity: button.jiu_mu_zhi_neng_ma_tong_zs800i_release_bluetooth_connection
+    name: 释放蓝牙连接
+    show_state: false
+    tap_action:
+      action: perform-action
+      perform_action: button.press
+      target:
+        entity_id: button.jiu_mu_zhi_neng_ma_tong_zs800i_release_bluetooth_connection
+    icon: mdi:bluetooth-off
+  - type: markdown
+    content: '蓝牙：{{ ''已连接'' if state_attr(''sensor.jiu_mu_zhi_neng_ma_tong_zs800i_last_control_result'',
+      ''bluetooth_connected'') else ''未连接 / 正在预热'' }}
+
+
+      最近命令发出：{{ state_attr(''sensor.jiu_mu_zhi_neng_ma_tong_zs800i_last_control_result'',
+      ''last_control_write_ms'') }} ms；判定结果：{{ state_attr(''sensor.jiu_mu_zhi_neng_ma_tong_zs800i_last_control_result'',
+      ''last_control_total_ms'') }} ms。'
   - type: entities
     title: 查询与控制结果
     show_header_toggle: false

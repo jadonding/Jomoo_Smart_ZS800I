@@ -9,6 +9,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = entry.runtime_data
     async_add_entities([
         JomooRefreshButton(coordinator, "refresh_status"),
+        JomooActionButton(coordinator, "disconnect_bluetooth"),
         *(JomooActionButton(coordinator, action) for action in ACTIONS),
     ])
 
@@ -26,8 +27,14 @@ class JomooActionButton(JomooEntity, ButtonEntity):
     @property
     def extra_state_attributes(self):
         attrs = super().extra_state_attributes
-        attrs["control_evidence"] = "protocol-derived"
+        if self.key != "disconnect_bluetooth":
+            attrs["control_evidence"] = "protocol-derived"
+        else:
+            attrs["releases_bluetooth"] = True
         return attrs
 
     async def async_press(self) -> None:
+        if self.key == "disconnect_bluetooth":
+            await self.coordinator.async_disconnect()
+            return
         await self.coordinator.async_control(self.key)

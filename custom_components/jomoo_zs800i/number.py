@@ -34,7 +34,8 @@ class JomooLevelNumber(JomooEntity, NumberEntity):
     def extra_state_attributes(self):
         attrs = super().extra_state_attributes
         attrs.update({"control_field": self.field, "control_evidence": "protocol-derived",
-                      "unit_note": "integer level, not degrees Celsius"})
+                      "observed_at": self.coordinator.data.get("field_times", {}).get(self.field),
+                       "unit_note": "integer level, not degrees Celsius"})
         return attrs
 
     async def async_set_native_value(self, value: float) -> None:

@@ -11,7 +11,7 @@
       },
       "bluetooth_confirm": {
         "title": "JOMOO ZS800I discovered",
-        "description": "Add device {address}? Connections occur on refresh or control. Controls are protocol-derived and not individually device-verified; only atmosphere light switching is physically verified."
+        "description": "Add device {address}? The default connection strategy performs a read-only warm-up at startup and keeps Bluetooth connected. Controls are protocol-derived and not individually device-verified; only atmosphere light switching is physically verified."
       }
     },
     "error": {
@@ -22,8 +22,31 @@
       "unsupported_device": "Only JOMOO_SMART_237371 is supported."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Bluetooth connection strategy",
+        "description": "Persistent mode keeps Bluetooth connected and performs a read-only warm-up at startup. This occupies the device's Bluetooth connection. Use Release Bluetooth connection before connecting the manufacturer's mini app; releasing does not trigger an automatic reconnect. No mode automatically replays control actions.",
+        "data": {
+          "connection_mode": "Connection strategy"
+        }
+      }
+    }
+  },
+  "selector": {
+    "connection_mode": {
+      "options": {
+        "persistent": "Keep connected (recommended)",
+        "idle": "Disconnect after 60 seconds idle",
+        "disconnect": "Disconnect after every operation"
+      }
+    }
+  },
   "entity": {
     "button": {
+      "disconnect_bluetooth": {
+        "name": "Release Bluetooth connection"
+      },
       "refresh_status": {
         "name": "Refresh status"
       },

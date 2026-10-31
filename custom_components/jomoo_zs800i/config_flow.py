@@ -5,12 +5,18 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 from homeassistant.const import CONF_ADDRESS
+from homeassistant.core import callback
 
 from .const import DOMAIN, LOCAL_NAME
 
 
 class JomooConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):
+        return JomooOptionsFlow()
 
     async def _set_address(self, address):
         self._address = address.upper()
@@ -53,3 +59,25 @@ class JomooConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                            data={CONF_ADDRESS: self._address})
         return self.async_show_form(step_id="bluetooth_confirm",
                                     description_placeholders={"address": self._address})
+
+
+class JomooOptionsFlow(config_entries.OptionsFlow):
+    """Configure connection lifetime; HA supplies the read-only config_entry property."""
+
+    async def async_step_init(self, user_input=None):
+        from homeassistant.helpers import selector
+
+        if user_input is not None:
+            return self.async_create_entry(title="", data={
+                "connection_mode": user_input["connection_mode"],
+            })
+        return self.async_show_form(step_id="init", data_schema=vol.Schema({
+            vol.Required("connection_mode", default=self.config_entry.options.get(
+                "connection_mode", "persistent")): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=["persistent", "idle", "disconnect"],
+                        translation_key="connection_mode",
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+        }))

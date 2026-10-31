@@ -82,7 +82,7 @@ module("homeassistant.util.dt", utcnow=lambda: datetime.now(timezone.utc),
 module("bleak", BleakClient=None)
 module("bleak.exc", BleakError=BLEError)
 
-async def establish_connection(client_class, device, name, *, max_attempts, timeout):
+async def establish_connection(client_class, device, name, *, max_attempts, timeout, disconnected_callback=None):
     assert max_attempts == 3 and timeout == const.CONNECT_TIMEOUT
     client = client_class(device, timeout=timeout)
     await client.__aenter__()
@@ -213,6 +213,10 @@ class FakeClient:
     async def __aexit__(self, *args):
         self.disconnected = True
 
+    @property
+    def is_connected(self):
+        return not self.disconnected
+
     async def disconnect(self):
         self.disconnected = True
 
@@ -267,6 +271,9 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
                         patch.object(bluetooth, "async_ble_device_from_address", lookup),
                         patch.object(coordinator_module, "NOTIFY_TIMEOUT", 0.025),
                         patch.object(coordinator_module, "CONTROL_SETTLE", 0),
+                        patch.object(coordinator_module, "MIN_WRITE_GAP", 0),
+                        patch.object(coordinator_module, "POST_COMMAND_PAUSE", 0),
+                        patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 0),
                         patch.object(coordinator_module, "CONTROL_READBACK_TIMEOUT", 0.005)]
         for item in self.patches:
             item.start()
@@ -275,10 +282,11 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.coordinator = coordinator_module.JomooCoordinator(self.hass, self.entry)
 
     async def asyncTearDown(self):
+        await self.coordinator.async_shutdown()
         for item in reversed(self.patches):
             item.stop()
 
-    async def test_startup_never_connects(self):
+    async def test_cache_restore_never_connects(self):
         await self.coordinator.async_load()
         self.assertEqual(FakeClient.instances, [])
         self.assertEqual(self.lookups, [])
@@ -438,6 +446,149 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(FakeClient.instances[0].disconnected)
         self.assertFalse(self.coordinator._lock.locked())
 
+    async def test_warm_controls_reuse_one_connection_and_subscription(self):
+        with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 60):
+            await self.coordinator.async_control("atmosphere_on", True)
+            client = FakeClient.instances[0]
+            callback = client.cb
+            self.assertFalse(client.disconnected)
+            await self.coordinator.async_control("atmosphere_on", True)
+            self.assertEqual(len(FakeClient.instances), 1)
+            self.assertIs(client.cb, callback)
+            self.assertTrue(self.coordinator.data["last_connection_reused"])
+            self.assertTrue(self.coordinator.data["bluetooth_connected"])
+            self.assertEqual(len(client.writes), 2)
+
+    async def test_warm_write_waits_for_receive_quiet_window(self):
+        with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 60), \
+             patch.object(coordinator_module, "CONTROL_SETTLE", 0.02):
+            await self.coordinator.async_control("atmosphere_on", True)
+            await self.coordinator.async_control("atmosphere_on", True)
+            self.assertGreaterEqual(self.coordinator.data["last_control_write_ms"], 15)
+            self.assertEqual(len(FakeClient.instances), 1)
+
+    async def test_persistent_mode_has_no_idle_disconnect_timer(self):
+        self.entry.options = {"connection_mode": "persistent"}
+        await self.coordinator.async_control("atmosphere_on", True)
+        self.assertIsNone(self.coordinator._idle_handle)
+        self.assertFalse(FakeClient.instances[0].disconnected)
+
+    async def test_persistent_startup_warmup_only_sends_queries(self):
+        self.entry.options = {"connection_mode": "persistent"}
+        self.coordinator.async_start_warmup()
+        await self.coordinator._warmup_task
+        self.assertTrue(self.coordinator._session.live)
+        self.assertTrue(all(p == const.QUERY for p, _ in FakeClient.instances[0].writes))
+        await self.coordinator.async_disconnect()
+        await asyncio.sleep(0.03)
+        self.assertEqual(len(FakeClient.instances), 1)
+        self.assertIsNone(self.coordinator._session)
+
+    async def test_warmup_is_cancelled_and_cleaned_on_shutdown(self):
+        self.entry.options = {"connection_mode": "persistent"}
+        FakeClient.gate = asyncio.Event()
+        self.coordinator.async_start_warmup()
+        await asyncio.sleep(0)
+        await self.coordinator.async_shutdown()
+        self.assertIsNone(self.coordinator._warmup_task)
+        self.assertIsNone(self.coordinator._session)
+        self.assertTrue(FakeClient.instances[0].disconnected)
+
+    async def test_option_change_can_release_persistent_connection(self):
+        self.entry.options = {"connection_mode": "persistent"}
+        await self.coordinator.async_control("atmosphere_on", True)
+        self.entry.options = {"connection_mode": "disconnect"}
+        await self.coordinator.async_apply_options()
+        self.assertTrue(FakeClient.instances[0].disconnected)
+
+    async def test_idle_mode_does_not_autowarm(self):
+        self.entry.options = {"connection_mode": "idle"}
+        self.coordinator.async_start_warmup()
+        self.assertIsNone(self.coordinator._warmup_task)
+        self.assertEqual(FakeClient.instances, [])
+
+    async def test_idle_timeout_releases_session(self):
+        with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 0.01):
+            await self.coordinator.async_control("atmosphere_on", True)
+            await asyncio.sleep(0.04)
+        self.assertTrue(FakeClient.instances[0].disconnected)
+        self.assertIsNone(self.coordinator._session)
+
+    async def test_old_idle_generation_never_disconnects_new_operation(self):
+        with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 60):
+            await self.coordinator.async_control("atmosphere_on", True)
+            old = self.coordinator._idle_generation
+            await self.coordinator.async_control("atmosphere_on", True)
+            await self.coordinator._idle_expired(old)
+            self.assertFalse(FakeClient.instances[0].disconnected)
+
+    async def test_release_button_path_disconnects_without_device_command(self):
+        with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 60):
+            await self.coordinator.async_control("atmosphere_on", True)
+            client = FakeClient.instances[0]
+            count = len(client.writes)
+            await self.coordinator.async_disconnect()
+            self.assertEqual(len(client.writes), count)
+            self.assertTrue(client.disconnected)
+            self.assertIsNone(self.coordinator._idle_handle)
+
+    async def test_warm_ordinary_control_still_requires_new_fa(self):
+        with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 60):
+            await self.coordinator.async_control("atmosphere_on", True)
+            client = FakeClient.instances[0]
+            count = len([p for p, _ in client.writes if p != const.QUERY])
+            FakeClient.packets = [E9, EA]
+            with self.assertRaises(HAError):
+                await self.coordinator.async_control("air_level", 1)
+            self.assertEqual(len([p for p, _ in client.writes if p != const.QUERY]), count)
+
+    async def test_live_notifications_update_cache_without_renewing_idle(self):
+        with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 60):
+            await self.coordinator.async_control("atmosphere_on", True)
+            generation = self.coordinator._idle_generation
+            payload = bytearray(FA[6:-2])
+            payload[0] = (payload[0] & ~0x70) | (4 << 4)
+            FakeClient.instances[0].cb(None, bytearray(frame(0xFA, payload)))
+            self.assertEqual(self.coordinator.data["fields"]["water_level"], 4)
+            self.assertEqual(self.coordinator._idle_generation, generation)
+
+    async def test_explicit_disconnect_callback_rejects_late_packets(self):
+        with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 60):
+            await self.coordinator.async_control("atmosphere_on", True)
+            client = FakeClient.instances[0]
+            self.coordinator._on_disconnected(client)
+            self.assertFalse(self.coordinator._session.active)
+            self.assertEqual(self.coordinator._session.frames, {})
+            before = dict(self.coordinator.data["fields"])
+            client.cb(None, bytearray(FA))
+            self.assertEqual(self.coordinator.data["fields"], before)
+
+    async def test_failed_disconnect_prevents_second_connection(self):
+        with patch.object(coordinator_module, "SESSION_IDLE_TIMEOUT", 60):
+            await self.coordinator.async_control("atmosphere_on", True)
+            client = FakeClient.instances[0]
+            async def stuck(_client):
+                raise BLEError("disconnect stuck")
+            with patch.object(FakeClient, "disconnect", stuck):
+                with self.assertRaises(BLEError):
+                    await self.coordinator.async_disconnect()
+                self.assertIs(self.coordinator._retired_client, client)
+                with patch.object(coordinator_module._LOGGER, "warning"):
+                    with self.assertRaises(HAError):
+                        await self.coordinator.async_control("atmosphere_on", True)
+                self.assertEqual(len(FakeClient.instances), 1)
+            await self.coordinator.async_disconnect()
+
+    async def test_ambiguous_actuator_write_is_not_reported_unsent(self):
+        FakeClient.fail = "write"
+        with patch.object(coordinator_module._LOGGER, "warning"):
+            with self.assertRaises(HAError):
+                await self.coordinator.async_control("atmosphere_on", False)
+        self.assertTrue(self.coordinator.data["control_write_attempted"])
+        self.assertFalse(self.coordinator.data["control_write_completed"])
+        self.assertEqual(self.coordinator.data["last_control_result"], "sent_unconfirmed")
+        self.assertEqual(len(FakeClient.instances[0].writes), 1)
+
     async def test_current_scanner_route_does_not_wait_for_duplicate_advertisement(self):
         with patch.object(bluetooth, "async_scanner_devices_by_address", lambda *a, **kw: [object()], create=True), \
              patch.object(self.coordinator, "_async_wait_for_advertisement", AsyncMock(side_effect=AssertionError("unnecessary scan"))):
@@ -527,7 +678,7 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(controls, [bytes.fromhex("f3f40692211f33101bfc")])
         self.assertEqual(self.coordinator.data["last_control_result"], "readback_mismatch")
         self.assertTrue(self.coordinator.data["fields"]["atmosphere_on"])
-        self.assertEqual(sum(packet == const.QUERY for packet, _ in writes), 4)
+        self.assertEqual(sum(packet == const.QUERY for packet, _ in writes), 3)
 
     async def test_temperature_control_uses_fresh_baseline_and_real_readback(self):
         payload = bytearray(FA[6:-2])
