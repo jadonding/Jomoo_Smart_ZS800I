@@ -212,6 +212,9 @@
     "control_requires_manual_temp": {
       "message": "Seasonal auto temperature is on and owns water and seat temperature. Turn off seasonal auto temperature first."
     },
+    "connection_failed": {
+      "message": "Bluetooth connection failed or timed out; it is being retried in the background. Try again shortly."
+    },
     "control_in_progress": {
       "message": "A toilet operation is in progress. Wait until it finishes."
     },

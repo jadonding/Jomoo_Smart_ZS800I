@@ -457,6 +457,85 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         await self.coordinator.async_apply_options()
         self.assertEqual(FakeClient.instances, [])
 
+    async def test_local_guard_rejection_keeps_the_warm_link(self):
+        """A rejected command must not cost the next tap a cold connect."""
+        self.entry.options = {"connection_mode": "persistent"}
+        await self.coordinator.async_query()
+        client = FakeClient.instances[0]
+        self.assertTrue(self.coordinator.data["fields"]["auto_temp"])
+        for name, value in (("water_level", 1), ("seat_level", 5)):
+            with self.subTest(name=name):
+                with self.assertRaises(HAError) as error:
+                    await self.coordinator.async_control(name, value)
+                self.assertEqual(error.exception.translation_key,
+                                 "control_requires_manual_temp")
+                self.assertFalse(client.disconnected)
+                self.assertTrue(self.coordinator._session.live)
+        self.assertEqual([p for p, _ in client.writes if p != const.QUERY], [])
+
+    async def test_guard_rejection_in_ephemeral_mode_still_releases(self):
+        """Explicit release policies keep their contract even after a refusal."""
+        self.entry.options = {"connection_mode": "disconnect"}
+        with self.assertRaises(HAError):
+            await self.coordinator.async_control("water_level", 1)
+        self.assertTrue(FakeClient.instances[0].disconnected)
+
+    async def test_unexpected_disconnect_rewarms_persistent_link_once(self):
+        self.entry.options = {"connection_mode": "persistent"}
+        await self.coordinator.async_query()
+        first = FakeClient.instances[0]
+        self.coordinator._on_disconnected(first)
+        self.assertFalse(self.coordinator.data["bluetooth_connected"])
+        self.assertIsNotNone(self.coordinator._rewarm_handle)
+        again = self.coordinator._rewarm_handle
+        self.coordinator._schedule_rewarm()
+        self.assertIs(again, self.coordinator._rewarm_handle)
+        self.coordinator._cancel_rewarm()
+        self.assertIsNone(self.coordinator._rewarm_handle)
+
+    async def test_manual_release_is_never_undone_by_rewarm(self):
+        self.entry.options = {"connection_mode": "persistent"}
+        await self.coordinator.async_query()
+        self.coordinator._releasing = True
+        try:
+            self.coordinator._on_disconnected(FakeClient.instances[0])
+            self.coordinator._schedule_rewarm()
+        finally:
+            self.coordinator._releasing = False
+        self.assertIsNone(self.coordinator._rewarm_handle)
+        self.coordinator._start_rewarm()
+        self.assertEqual(len(FakeClient.instances), 1)
+
+    async def test_rewarm_skipped_for_non_persistent_policies(self):
+        for mode in ("idle", "disconnect"):
+            with self.subTest(mode=mode):
+                self.entry.options = {"connection_mode": mode}
+                self.coordinator._schedule_rewarm()
+                self.assertIsNone(self.coordinator._rewarm_handle)
+
+    async def test_slow_connect_fails_fast_and_schedules_retry(self):
+        self.entry.options = {"connection_mode": "persistent"}
+
+        async def stalled(*args, **kwargs):
+            await asyncio.sleep(30)
+        started = asyncio.get_running_loop().time()
+        with patch.object(coordinator_module, "establish_connection", stalled), \
+             patch.object(coordinator_module, "CONNECT_BUDGET", 0.02):
+            await self.coordinator.async_query()
+        elapsed = asyncio.get_running_loop().time() - started
+        self.assertLess(elapsed, 5, "a stalled connect must not hold the request")
+        self.assertEqual(self.coordinator.data["last_result"], "connection_timeout")
+        self.assertIsNotNone(self.coordinator._rewarm_handle)
+        self.coordinator._cancel_rewarm()
+
+    async def test_shutdown_cancels_pending_rewarm(self):
+        self.entry.options = {"connection_mode": "persistent"}
+        await self.coordinator.async_query()
+        self.coordinator._schedule_rewarm()
+        self.assertIsNotNone(self.coordinator._rewarm_handle)
+        await self.coordinator.async_shutdown()
+        self.assertIsNone(self.coordinator._rewarm_handle)
+
     async def test_cache_restore_never_connects(self):
         await self.coordinator.async_load()
         self.assertEqual(FakeClient.instances, [])

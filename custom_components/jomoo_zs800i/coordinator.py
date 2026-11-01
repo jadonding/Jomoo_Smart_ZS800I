@@ -30,8 +30,23 @@ POST_COMMAND_PAUSE = 0.25
 BASELINE_QUERY_TIMEOUT = 1.0
 SESSION_IDLE_TIMEOUT = -1.0  # persistent by default; UI options can select 60 or 0
 CONTROL_READBACK_TIMEOUT = 3.0
+# A single cold BLE connect has been measured at 4.5-9 s. Bound the whole
+# establishment (the library retries internally, which alone once burned 56 s
+# and exhausted the adapter's connection slots) so the UI fails fast instead.
+CONNECT_BUDGET = 25.0
+REWARM_DELAY = 1.0
+REWARM_RETRY = 15.0
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class ControlRejected(HomeAssistantError):
+    """A local guard refused a command while the BLE link itself is healthy.
+
+    Such a refusal must never tear down the session: the previous behaviour did,
+    so the user's next tap paid a full cold connect (measured 4.5-9 s) and could
+    even exhaust the adapter's connection slots.
+    """
 
 
 class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -54,6 +69,8 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._confirmation_draining = set()
         self._control_waiters = 0
         self._closing = False
+        self._releasing = False
+        self._rewarm_handle = None
         self._store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}")
         self.data = {"bluetooth_connected": False, "last_result": "never_queried", "last_control_result": "never_sent", "frames": {},
                      "frame_times": {}, "fields": {}, "field_times": {}}
@@ -99,7 +116,10 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             except TimeoutError:
                 self.data["last_result"] = "connection_timeout"
             except (BleakError, OSError, HomeAssistantError) as err:
-                self.data["last_result"] = "connection_error"
+                # Keep the specific reason a bounded connect already recorded
+                # instead of flattening it to a generic connection error.
+                if self.data["last_result"] not in ("connection_timeout", "not_discovered"):
+                    self.data["last_result"] = "connection_error"
                 _LOGGER.debug("JOMOO status query failed: %s", err)
             except Exception:
                 self.data["last_result"] = "unexpected_error"
@@ -204,17 +224,17 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.data["last_result"] = "valid_status_received"
         await self._wait_command_window(session)
         if name in LEVELS and fields["working"]:
-            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="control_requires_idle")
+            raise ControlRejected(translation_domain=DOMAIN, translation_key="control_requires_idle")
         if name in ("water_level", "seat_level") and fields.get("auto_temp"):
             # Verified on 237371: with seasonal-auto temperature on, the
             # firmware accepts command 25 and applies air level but keeps
             # FA[6]/FA[7] unchanged. Do not write a command that cannot apply.
-            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="control_requires_manual_temp")
+            raise ControlRejected(translation_domain=DOMAIN, translation_key="control_requires_manual_temp")
         if name in {"lid_open", "lid_close", "ring_open", "ring_close"} and (
                 fields["occupancy"] or fields["working"] or fields.get("lid_moving", True) or fields.get("ring_moving", True)):
-            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="control_requires_unoccupied")
+            raise ControlRejected(translation_domain=DOMAIN, translation_key="control_requires_unoccupied")
         if name in {"wash_hip", "wash_woman", "wash_auto_hip", "wash_auto_woman", "dry"} and not fields["occupancy"]:
-            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="control_requires_occupied")
+            raise ControlRejected(translation_domain=DOMAIN, translation_key="control_requires_occupied")
         if self._closing:
             raise HomeAssistantError(translation_domain=DOMAIN, translation_key="query_in_progress")
         packet = build_control(name, value, frames.get("FA"), fields)
@@ -405,6 +425,11 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             session.invalidate()
             self.data["bluetooth_connected"] = False
             self.async_set_updated_data(self.data)
+            # An unplanned link loss would otherwise bill the next tap for a
+            # 5-9 s cold connect. Re-warm with one read-only query when the
+            # user's policy is persistent; releases never re-acquire.
+            if not self._closing and not self._releasing and self.connection_timeout() < 0:
+                self._schedule_rewarm()
 
     async def _drain_retired(self):
         client = self._retired_client
@@ -460,6 +485,31 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         else:
             self._warmup_task = self.hass.async_create_task(self._async_warmup())
 
+    def _schedule_rewarm(self, delay=REWARM_DELAY):
+        """Re-establish a persistent link once, never replaying an action."""
+        if self._closing or self._releasing or self.connection_timeout() >= 0:
+            return
+        if self._rewarm_handle is not None:
+            return
+        self._cancel_rewarm()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # The disconnected callback may arrive off the event loop.
+            loop = self.hass.loop
+        self._rewarm_handle = loop.call_later(delay, self._start_rewarm)
+
+    def _cancel_rewarm(self):
+        if self._rewarm_handle is not None:
+            self._rewarm_handle.cancel()
+            self._rewarm_handle = None
+
+    def _start_rewarm(self):
+        self._rewarm_handle = None
+        if self._closing or self._releasing:
+            return
+        self.async_start_warmup()
+
     async def _async_warmup(self):
         if self._lock.locked() or (self._session is not None and self._session.live):
             return
@@ -472,6 +522,7 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._closing:
             return
         await self._cancel_confirmation()
+        self._cancel_rewarm()
         async with self._lock:
             if self._closing:
                 return
@@ -498,11 +549,16 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_disconnect(self):
         """Release the BLE session for the manufacturer's app; never send an action."""
         await self._cancel_confirmation()
+        self._cancel_rewarm()
         if self._lock.locked():
             raise HomeAssistantError(translation_domain=DOMAIN, translation_key="query_in_progress")
-        async with self._lock:
-            await self._close_session()
-            await self._store.async_save(self.data)
+        self._releasing = True
+        try:
+            async with self._lock:
+                await self._close_session()
+                await self._store.async_save(self.data)
+        finally:
+            self._releasing = False
 
     async def _async_wait_for_advertisement(self):
         """Refresh HA's connection source, including unchanged advertisements."""
@@ -556,10 +612,22 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if ble_device is None:
             self.data["last_result"] = "not_discovered"
             return None, lambda: None
-        client = await establish_connection(
-            BleakClient, ble_device, MODEL, max_attempts=3, timeout=CONNECT_TIMEOUT,
-            disconnected_callback=self._on_disconnected,
-        )
+        try:
+            async with asyncio.timeout(CONNECT_BUDGET):
+                client = await establish_connection(
+                    BleakClient, ble_device, MODEL, max_attempts=3, timeout=CONNECT_TIMEOUT,
+                    disconnected_callback=self._on_disconnected,
+                )
+        except (TimeoutError, BleakError, OSError) as err:
+            # The library's internal retries can hold the adapter for a minute
+            # or more; a bounded failure plus a later silent re-warm keeps the
+            # next tap from inheriting that wait.
+            self.data["last_result"] = ("connection_timeout" if isinstance(err, TimeoutError)
+                                        else "connection_error")
+            _LOGGER.debug("BLE connect failed within %.0fs: %s", CONNECT_BUDGET, err)
+            self._schedule_rewarm(REWARM_RETRY)
+            raise HomeAssistantError(translation_domain=DOMAIN,
+                                     translation_key="connection_failed") from err
         self._retired_client = client
         try:
             char = client.services.get_characteristic(CHAR_UUID)
@@ -621,6 +689,10 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self.data["last_result"] = "valid_status_received" if received.is_set() else "no_valid_status"
                 else:
                     self.data["last_result"] = "valid_status_received"
+        except ControlRejected:
+            # A guard said "not now" while the link is fine. Keep the session:
+            # tearing it down made every retry pay a cold connect.
+            raise
         except BaseException:
             await self._close_session()
             raise
@@ -637,6 +709,7 @@ class JomooCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await asyncio.gather(self._warmup_task, return_exceptions=True)
         self._warmup_task = None
         self._cancel_idle()
+        self._cancel_rewarm()
         if self._publish_handle:
             self._publish_handle.cancel()
             self._publish_handle = None

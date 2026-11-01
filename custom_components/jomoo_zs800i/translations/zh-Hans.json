@@ -212,6 +212,9 @@
     "control_requires_manual_temp": {
       "message": "四季温感已开启，正在接管水温和座温；请先关闭“四季温感”，再设置档位。"
     },
+    "connection_failed": {
+      "message": "蓝牙连接失败或超时，已在后台自动重试；稍后可再试一次。"
+    },
     "control_in_progress": {
       "message": "马桶正在操作，请稍后再试。"
     },

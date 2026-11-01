@@ -1,7 +1,7 @@
 {
   "domain": "jomoo_zs800i",
   "name": "九牧 ZS800I（237371）",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "config_flow": true,
   "documentation": "https://github.com/jadonding/Jomoo_Smart_ZS800I",
   "issue_tracker": "https://github.com/jadonding/Jomoo_Smart_ZS800I/issues",
